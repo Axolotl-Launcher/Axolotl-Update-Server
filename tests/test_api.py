@@ -69,10 +69,14 @@ def test_beta_channel_includes_release_and_beta(client, app):
     raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
     client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
     with app.app_context():
+        from pathlib import Path
+
         from app.extensions import db
         from app.models import Artifact, Version
         beta = Version(version="1.1.0-beta.1", channel="beta", status="published", published_at=Version.query.filter_by(version="1.0.0").first().published_at)
         db.session.add(beta); db.session.commit()
+        Path(app.config["DIST_ROOT"], "1.1.0-beta.1").mkdir(parents=True, exist_ok=True)
+        Path(app.config["DIST_ROOT"], "1.1.0-beta.1", "beta.tar.gz").write_bytes(b"x")
         db.session.add(Artifact(version_id=beta.id, platform="linux-x86_64", filename="beta.tar.gz", relative_path="dist/1.1.0-beta.1/beta.tar.gz", size=1, sha256="0" * 64, signature="sig", content_type="application/gzip")); db.session.commit()
     response = client.get("/latest?channel=beta&platform=linux-x86_64")
     assert response.status_code == 200

@@ -7,7 +7,7 @@ from flask import Blueprint, Response, current_app, jsonify, request
 from semver import Version as SemVersion
 
 from ..errors import ApiError
-from ..models import Version
+from ..models import Version, utcnow
 
 latest_bp = Blueprint("latest", __name__)
 
@@ -16,6 +16,16 @@ def iso_utc(value):
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def artifact_available(version, platform):
+    for artifact in version.artifacts:
+        if artifact.platform != platform or not artifact.signature:
+            continue
+        path = Path(current_app.config["DIST_ROOT"]) / version.version / artifact.filename
+        if path.is_file() and path.stat().st_size == artifact.size:
+            return True
+    return False
 
 
 @latest_bp.get("/latest")
@@ -38,6 +48,7 @@ def latest():
             if (v.channel == "release" and not SemVersion.parse(v.version).prerelease)
             or (v.channel == "beta" and SemVersion.parse(v.version).prerelease)
         ]
+    candidates = [v for v in candidates if v.published_at is not None or v.force_update]
     if current:
         try: current_sv = SemVersion.parse(current); candidates = [v for v in candidates if SemVersion.parse(v.version) > current_sv]
         except ValueError as exc:
@@ -45,7 +56,7 @@ def latest():
     if platform:
         candidates = [
             v for v in candidates
-            if any(a.platform == platform and a.signature for a in v.artifacts)
+            if artifact_available(v, platform)
         ]
     if not candidates: return Response(status=204)
     chosen = max(candidates, key=lambda v: SemVersion.parse(v.version))
@@ -53,7 +64,8 @@ def latest():
     if platform and not artifacts: return Response(status=204)
     platforms = {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in artifacts if a.signature}
     if platform and platform not in platforms: return Response(status=204)
-    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": iso_utc(chosen.published_at), "published_at": iso_utc(chosen.published_at), "force_update": bool(chosen.force_update), "platforms": platforms}
+    published_at = iso_utc(chosen.published_at or utcnow())
+    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": published_at, "published_at": published_at, "force_update": bool(chosen.force_update), "platforms": platforms}
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     etag = hashlib.sha256(body.encode()).hexdigest()
     if request.if_none_match and request.if_none_match.contains(etag): return Response(status=304, headers={"ETag": etag})

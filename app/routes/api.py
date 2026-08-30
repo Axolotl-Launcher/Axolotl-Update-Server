@@ -44,7 +44,17 @@ def pointer_candidate(channel: str):
         versions = [v for v in versions if v.channel == "release" and not SemVersion.parse(v.version).prerelease]
     else:
         versions = [v for v in versions if (v.channel == "release" and not SemVersion.parse(v.version).prerelease) or (v.channel == "beta" and SemVersion.parse(v.version).prerelease)]
-    versions = [v for v in versions if any(a.platform in PLATFORMS and a.signature for a in v.artifacts)]
+    versions = [
+        v for v in versions
+        if v.published_at is not None and any(
+            a.platform in PLATFORMS
+            and a.signature
+            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
+            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
+            and hashlib.sha256((Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).read_bytes()).hexdigest() == a.sha256
+            for a in v.artifacts
+        )
+    ]
     return max(versions, key=lambda v: SemVersion.parse(v.version)).version if versions else None
 
 
