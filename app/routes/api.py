@@ -1,4 +1,5 @@
 import hashlib
+import json
 import mimetypes
 import re
 import secrets
@@ -69,8 +70,13 @@ def upload_artifact(version, filename):
     expected_size = request.headers.get("X-Axolotl-Size")
     if expected_hash and not secrets.compare_digest(expected_hash.lower(), digest):
         raise ApiError("hash_mismatch", "Uploaded content hash does not match.")
-    if expected_size and int(expected_size) != size:
-        raise ApiError("size_mismatch", "Uploaded content size does not match.")
+    if expected_size:
+        try:
+            size_matches = int(expected_size) == size
+        except ValueError as exc:
+            raise ApiError("invalid_size", "X-Axolotl-Size must be an integer.") from exc
+        if not size_matches:
+            raise ApiError("size_mismatch", "Uploaded content size does not match.")
     v = Version.query.filter_by(version=version).first()
     if not v:
         v = Version(version=version, channel="beta" if "-" in version else "release", status="uploading")
@@ -105,8 +111,9 @@ def release_webhook():
         raise ApiError("invalid_webhook_timestamp", "Webhook timestamp is required.") from exc
     if abs(datetime.now(timezone.utc).timestamp() - ts) > current_app.config["WEBHOOK_MAX_AGE_SECONDS"]:
         raise ApiError("stale_webhook", "Webhook timestamp is outside the accepted window.")
-    expected = hashlib.sha256((timestamp + ".").encode() + raw).hexdigest()
     import hmac
+    if not current_app.config["WEBHOOK_SECRET"]:
+        raise ApiError("auth_not_configured", "Webhook authentication is not configured.", 503)
     expected = hmac.new(current_app.config["WEBHOOK_SECRET"].encode(), (timestamp + ".").encode() + raw, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature.removeprefix("sha256="), expected):
         raise ApiError("invalid_webhook_signature", "Webhook signature is invalid.", 401)
@@ -136,12 +143,24 @@ def release_webhook():
         required = {a.get("platform") for a in artifacts}
         for a_data in artifacts:
             a = Artifact.query.filter_by(relative_path=f"dist/{version}/{a_data.get('filename')}").first()
-            if not a or a.sha256 != a_data.get("sha256") or a.size != a_data.get("size") or not a_data.get("signature"):
+            path = Path(current_app.config["DIST_ROOT"]) / version / (a_data.get("filename") or "")
+            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+            actual_size = path.stat().st_size if path.is_file() else -1
+            if (not a or actual_hash != a.sha256 or actual_size != a.size or a.sha256 != a_data.get("sha256") or a.size != a_data.get("size") or not a_data.get("signature")):
                 raise ApiError("artifact_validation_failed", "Webhook artifact validation failed.")
             a.platform, a.architecture, a.signature = a_data.get("platform", a.platform), a_data.get("architecture", a.architecture), a_data.get("signature")
         if not artifacts or not required:
             raise ApiError("missing_artifacts", "At least one complete artifact is required.")
         v.status = "published"; db.session.add(v)
+        manifest = {
+            "version": v.version,
+            "notes": v.notes or "",
+            "pub_date": v.published_at.isoformat().replace("+00:00", "Z"),
+            "published_at": v.published_at.isoformat().replace("+00:00", "Z"),
+            "platforms": {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in v.artifacts if a.signature},
+        }
+        manifest_path = Path(current_app.config["DIST_ROOT"]) / version / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         pointer = db.session.get(ChannelPointer, channel) or ChannelPointer(channel=channel)
         pointer.current_version = version; db.session.add(pointer)
         event.status, event.processed_at = "processed", utcnow()

@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import timezone
 from pathlib import Path
 
 from flask import Blueprint, Response, current_app, jsonify, request
@@ -9,6 +10,12 @@ from ..errors import ApiError
 from ..models import Version
 
 latest_bp = Blueprint("latest", __name__)
+
+
+def iso_utc(value):
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @latest_bp.get("/latest")
@@ -30,7 +37,7 @@ def latest():
     if platform and not artifacts: return Response(status=204)
     platforms = {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in artifacts if a.signature}
     if platform and platform not in platforms: return Response(status=204)
-    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": chosen.published_at.isoformat().replace("+00:00", "Z"), "published_at": chosen.published_at.isoformat().replace("+00:00", "Z"), "platforms": platforms}
+    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": iso_utc(chosen.published_at), "published_at": iso_utc(chosen.published_at), "platforms": platforms}
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     etag = hashlib.sha256(body.encode()).hexdigest()
     if request.if_none_match and request.if_none_match.contains(etag): return Response(status=304, headers={"ETag": etag})
