@@ -52,6 +52,75 @@ Back up both the SQLite database (`instance/update-server.db` by default) and th
 
 The built-in rate limiter is process-local and intended as a baseline safeguard. With multiple Gunicorn workers, use a shared proxy/Redis limiter for consistent enforcement.
 
+### systemd
+
+`deploy/axolotl-update-server.service` runs Gunicorn from the project's `.venv` and loads `/srv/axolotl-update-server/.env`. It assumes the project is deployed at `/srv/axolotl-update-server` and runs as the dedicated `axolotl-update` user.
+
+Create the service user and install the project before enabling the unit:
+
+```bash
+sudo useradd --system --home-dir /srv/axolotl-update-server --shell /usr/sbin/nologin axolotl-update
+sudo install -d -o axolotl-update -g axolotl-update /srv/axolotl-update-server
+sudo chown -R axolotl-update:axolotl-update /srv/axolotl-update-server
+```
+
+Create the virtual environment and install dependencies as that user:
+
+```bash
+sudo -u axolotl-update python3 -m venv /srv/axolotl-update-server/.venv
+sudo -u axolotl-update /srv/axolotl-update-server/.venv/bin/pip install -r /srv/axolotl-update-server/requirements.txt
+```
+
+Copy `.env.example` to `.env`, set unique production secrets, and restrict it to the service account:
+
+```bash
+sudo -u axolotl-update cp /srv/axolotl-update-server/.env.example /srv/axolotl-update-server/.env
+sudo chmod 600 /srv/axolotl-update-server/.env
+```
+
+The `.env` file is consumed by systemd's `EnvironmentFile`, so use plain `KEY=value` lines. Do not use `export`, shell substitutions, multiline values, or quotes that need shell interpretation. Use absolute production paths:
+
+```dotenv
+FLASK_ENV=production
+SECRET_KEY=<unique-secret>
+DATABASE_URL=sqlite:////srv/axolotl-update-server/instance/update-server.db
+DIST_ROOT=/www/wwwroot/update.axlmc.org/dist
+PUBLIC_BASE_URL=https://update.axlmc.org
+UPDATE_SERVER_HOST=127.0.0.1
+UPDATE_SERVER_PORT=8082
+UPLOAD_TOKEN=<unique-upload-token>
+WEBHOOK_SECRET=<unique-webhook-secret>
+ADMIN_TOKEN=<unique-admin-token>
+MAX_UPLOAD_SIZE=536870912
+WEBHOOK_MAX_AGE_SECONDS=300
+RATE_LIMIT_PER_MINUTE=120
+```
+
+Ensure the service user can write the database directory and `DIST_ROOT`:
+
+```bash
+sudo install -d -o axolotl-update -g axolotl-update /srv/axolotl-update-server/instance
+sudo install -d -o axolotl-update -g axolotl-update /www/wwwroot/update.axlmc.org/dist
+```
+
+Install and start the service:
+
+```bash
+sudo install -m 644 deploy/axolotl-update-server.service /etc/systemd/system/axolotl-update-server.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now axolotl-update-server
+sudo systemctl status axolotl-update-server
+```
+
+View logs and restart after changing `.env`, dependencies, or source files:
+
+```bash
+sudo journalctl -u axolotl-update-server -f
+sudo systemctl restart axolotl-update-server
+```
+
+The unit runs `flask --app wsgi:app db upgrade` before Gunicorn starts. Back up the SQLite database and `DIST_ROOT` before deploying a schema migration. If migration fails, systemd does not start Gunicorn.
+
 ### Database migrations
 
 Initialize or upgrade the schema before production startup:

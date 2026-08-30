@@ -1,0 +1,28 @@
+[Unit]
+Description=Axolotl Update Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=axolotl-update
+Group=axolotl-update
+WorkingDirectory=/srv/axolotl-update-server
+EnvironmentFile=/srv/axolotl-update-server/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/srv/axolotl-update-server/.venv/bin/flask --app wsgi:app db upgrade
+ExecStart=/srv/axolotl-update-server/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8082 --access-logfile - --error-logfile - --capture-output wsgi:app
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/srv/axolotl-update-server
+
+[Install]
+WantedBy=multi-user.target
