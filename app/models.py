@@ -35,6 +35,7 @@ class Artifact(db.Model):
     size = db.Column(db.BigInteger, nullable=False)
     sha256 = db.Column(db.String(64), nullable=False)
     signature = db.Column(db.Text)
+    signature_filename = db.Column(db.String(255))
     content_type = db.Column(db.String(128), nullable=False)
     kind = db.Column(db.String(16), nullable=False, default="updater", server_default="updater")
     variant = db.Column(db.String(32), nullable=False, default="", server_default="")
