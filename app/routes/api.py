@@ -174,7 +174,7 @@ def artifact_json(a):
 
 
 def download_json(a):
-    return {"id": a.id, "kind": a.kind, "platform": a.platform, "architecture": a.architecture, "variant": a.variant, "label": a.display_name or a.filename, "display_name": a.display_name or a.filename, "filename": a.filename, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}", "size": a.size, "sha256": a.sha256, "signature": a.signature}
+    return {"id": a.id, "kind": a.kind, "platform": a.platform, "architecture": a.architecture, "variant": a.variant, "label": a.display_name or a.filename, "display_name": a.display_name or a.filename, "sort_order": a.sort_order, "filename": a.filename, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}", "size": a.size, "sha256": a.sha256, "signature": a.signature}
 
 
 def eligible_versions(channel: str):
