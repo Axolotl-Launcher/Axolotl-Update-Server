@@ -41,3 +41,4 @@ def test_revoke_restore(client):
     assert client.post("/api/admin/versions/1.0.0/revoke", headers={"Authorization": "Bearer admin"}, json={"reason": "bad"}).status_code == 200
     assert client.get("/latest?platform=linux-x86_64").status_code == 204
     assert client.post("/api/admin/versions/1.0.0/restore", headers={"Authorization": "Bearer admin"}).status_code == 200
+    assert client.get("/latest?platform=linux-x86_64").status_code == 200

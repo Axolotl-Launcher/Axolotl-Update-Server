@@ -28,7 +28,7 @@ The Windows equivalent is `.venv\\Scripts\\python -m pip install -r requirements
 
 ## Caddy and production
 
-Copy `Caddyfile.example` to the Caddy configuration. It routes `/dist/*` to `/www/wwwroot/update.axlmc.org`, and `/latest` plus `/api/*` to Flask on `127.0.0.1:8082`; Caddy automatically manages HTTPS certificates. Place the server's `DIST_ROOT` at that web root (for example, `DIST_ROOT=/www/wwwroot/update.axlmc.org`). Run Flask behind Gunicorn:
+Copy `Caddyfile.example` to the Caddy configuration. It routes `/dist/*` to `/www/wwwroot/update.axlmc.org/dist`, and `/latest` plus `/api/*` to Flask on `127.0.0.1:8082`; Caddy automatically manages HTTPS certificates. Set `DIST_ROOT=/www/wwwroot/update.axlmc.org/dist` so files are stored as `/dist/<version>/...`. Run Flask behind Gunicorn:
 
 ```bash
 gunicorn --workers 2 --bind 127.0.0.1:8082 wsgi:app

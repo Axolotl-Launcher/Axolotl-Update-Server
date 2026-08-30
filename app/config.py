@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 class Config:
+    FLASK_ENV = os.getenv("FLASK_ENV", "development")
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///update-server.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False

@@ -186,7 +186,11 @@ def _admin_change(version, restore=False):
         v.status, v.revoked_at, v.revoke_reason = "revoked", utcnow(), reason
         action = "revoke"
     pointer = db.session.get(ChannelPointer, v.channel)
-    if pointer and pointer.current_version == version:
+    if restore:
+        pointer = pointer or ChannelPointer(channel=v.channel)
+        pointer.current_version = version
+        db.session.add(pointer)
+    elif pointer and pointer.current_version == version:
         candidates = [x for x in Version.query.filter_by(channel=v.channel, status="published").all() if x.version != version]
         pointer.current_version = max(candidates, key=lambda x: SemVersion.parse(x.version)).version if candidates else None
     db.session.add(AuditLog(operator=operator, action=action, channel=v.channel, version=version, reason=reason, request_id=request.environ.get("request_id"), ip_address=request.remote_addr))
