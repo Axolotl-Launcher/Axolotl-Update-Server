@@ -1,6 +1,10 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 class Config:
     FLASK_ENV = os.getenv("FLASK_ENV", "development")

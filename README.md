@@ -44,6 +44,8 @@ gunicorn --workers 2 --bind 127.0.0.1:8082 wsgi:app
 
 Back up both the SQLite database (`instance/update-server.db` by default) and the complete `DIST_ROOT` tree. Never commit `.env`, database files, or artifacts. `MAX_UPLOAD_SIZE` limits request bodies and `WEBHOOK_MAX_AGE_SECONDS` limits replay windows.
 
+The built-in rate limiter is process-local and intended as a baseline safeguard. With multiple Gunicorn workers, use a shared proxy/Redis limiter for consistent enforcement.
+
 ### Database migrations
 
 Initialize or upgrade the schema before production startup:

@@ -50,6 +50,7 @@ def pointer_candidate(channel: str):
         if v.published_at is not None and any(
             a.platform in PLATFORMS
             and a.signature
+            and a.relative_path == f"dist/{v.version}/{a.filename}"
             and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
             and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
             and hashlib.sha256((Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).read_bytes()).hexdigest() == a.sha256
@@ -120,9 +121,12 @@ def upload_artifact(version, filename):
         db.session.add(v); db.session.flush()
     existing = Artifact.query.filter_by(relative_path=f"dist/{version}/{filename}").first()
     if existing:
-        Path(temp_name).unlink(missing_ok=True)
         if existing.sha256 == digest and existing.size == size:
+            if not path.exists():
+                os.link(temp_name, path)
+            Path(temp_name).unlink(missing_ok=True)
             return jsonify({"artifact": artifact_json(existing), "idempotent": True})
+        Path(temp_name).unlink(missing_ok=True)
         raise ApiError("artifact_exists", "An artifact with a different hash already exists.", 409)
     try:
         os.link(temp_name, path)
@@ -184,6 +188,8 @@ def release_webhook():
             raise ApiError("prerelease_release", "Release channel cannot publish prerelease versions.")
         if channel == "beta" and not parsed.prerelease:
             raise ApiError("stable_beta", "Beta channel requires a prerelease version.")
+        if not isinstance(payload.get("force_update", False), bool):
+            raise ApiError("invalid_force_update", "force_update must be a boolean.")
         v = Version.query.filter_by(version=version).first() or Version(version=version, channel=channel)
         v.channel, v.notes, v.release_tag, v.release_id = channel, payload.get("notes", ""), tag, str(payload.get("release_id", ""))
         v.force_update = bool(payload.get("force_update", False))

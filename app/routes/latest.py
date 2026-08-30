@@ -37,6 +37,9 @@ def latest():
         raise ApiError("invalid_channel", "Only release and beta channels are supported.")
     if channel == "release":
         candidates = Version.query.filter_by(channel="release", status="published").all()
+        invalid = [v for v in candidates if SemVersion.parse(v.version).prerelease]
+        for version in invalid:
+            current_app.logger.warning("Ignoring invalid release version: %s", version.version)
         candidates = [v for v in candidates if not SemVersion.parse(v.version).prerelease]
     else:
         # Beta clients may receive both stable releases and beta prereleases.
