@@ -25,12 +25,23 @@ def latest():
     current = request.headers.get("X-Axolotl-Version") or request.args.get("current_version", "")
     if channel not in ("release", "beta"):
         raise ApiError("invalid_channel", "Only release and beta channels are supported.")
-    candidates = Version.query.filter_by(channel=channel, status="published").all()
-    if channel == "release": candidates = [v for v in candidates if not SemVersion.parse(v.version).prerelease]
+    if channel == "release":
+        candidates = Version.query.filter_by(channel="release", status="published").all()
+        candidates = [v for v in candidates if not SemVersion.parse(v.version).prerelease]
+    else:
+        # Beta clients may receive both stable releases and beta prereleases.
+        candidates = Version.query.filter(
+            Version.channel.in_(("release", "beta")), Version.status == "published"
+        ).all()
     if current:
         try: current_sv = SemVersion.parse(current); candidates = [v for v in candidates if SemVersion.parse(v.version) > current_sv]
         except ValueError as exc:
             raise ApiError("invalid_version", "Current version must be valid SemVer.") from exc
+    if platform:
+        candidates = [
+            v for v in candidates
+            if any(a.platform == platform and a.signature for a in v.artifacts)
+        ]
     if not candidates: return Response(status=204)
     chosen = max(candidates, key=lambda v: SemVersion.parse(v.version))
     artifacts = [a for a in chosen.artifacts if a.platform == platform] if platform else chosen.artifacts
