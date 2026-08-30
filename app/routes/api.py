@@ -368,7 +368,7 @@ def release_webhook():
                 current_app.config.get("RELEASE_RETENTION_COUNT", 3),
                 current_app.config.get("BETA_RETENTION_COUNT", 3),
             )
-        except OSError:
+        except Exception:
             current_app.logger.exception("Artifact retention cleanup failed")
         return jsonify({"status": "published", "version": version})
     except ApiError as exc:
