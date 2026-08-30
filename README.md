@@ -6,7 +6,7 @@ See the deployment and API documentation below.
 
 ## Local setup
 
-Python 3.11+ is required. Create a virtual environment, install dependencies, copy `.env.example` to `.env`, and set non-default `SECRET_KEY`, `UPLOAD_TOKEN`, `WEBHOOK_SECRET`, and `ADMIN_TOKEN` values:
+Python 3.11+ is required. Create a virtual environment, install dependencies, copy `.env.example` to `.env`, and set non-default `SECRET_KEY`, `WEBHOOK_SECRET`, and `ADMIN_TOKEN` values. `UPLOAD_TOKEN` is optional and only used for local/admin artifact maintenance.
 
 ```bash
 python -m venv .venv
@@ -21,22 +21,22 @@ The Windows equivalent is `.venv\\Scripts\\python -m pip install -r requirements
 * `GET /api/health`, `GET /api/versions`, and `GET /api/versions/<version>` expose service/version data.
 * Upload with `PUT /api/artifacts/<version>/<filename>` and `X-Upload-Token`. The body is hashed server-side and stored below `DIST_ROOT/<version>/` (with the default `DIST_ROOT=./dist`, this is `./dist/<version>/`).
   Package metadata is supplied with `X-Axolotl-Platform` (`windows`, `macos`, `linux` or an updater platform), `X-Axolotl-Architecture` (`x86_64`, `aarch64`, `universal`), `X-Axolotl-Kind` (`updater`, `installer`, `portable`, `signature`, `manifest`, `other`), optional `X-Axolotl-Variant`, and `X-Axolotl-Display-Name`. Existing uploads default to `kind=updater` for compatibility.
-* Publish with `POST /api/webhook/release`. Send JSON described in the objective, `X-Webhook-Timestamp` (Unix seconds), and `X-Webhook-Signature: sha256=<HMAC-SHA256 of timestamp + '.' + raw body>`.
+* Publish with `POST /api/webhook/release`. The normal GitHub Actions flow first publishes the GitHub Release, then sends a small HMAC-authenticated payload. The server validates the public GitHub metadata and catalog, streams every catalog file (including `.sig`) to `DIST_ROOT/<version>/`, validates SHA-256 and size, then publishes atomically. The workflow must not upload large files through `/api/artifacts/*` and does not need `UPLOAD_TOKEN`.
 * Check updates with `/latest`; headers `X-Axolotl-Channel`, `X-Axolotl-Platform`, and `X-Axolotl-Version` override query parameters. Release selects only stable published Release versions. Beta selects the highest compatible stable Release or published beta prerelease.
 * Browse complete public packages with `GET /api/downloads/latest?channel=release|beta` or `GET /api/downloads/<version>`. These endpoints return installer and portable artifacts with generated `/dist/<version>/...` URLs, labels, variants, sizes, and SHA-256 hashes. They intentionally exclude updater artifacts unless `include_updater=true` is supplied; they never expose signature-only attachments as packages.
 * Admin endpoints require `Authorization: Bearer <ADMIN_TOKEN>`: `POST /api/admin/versions/<version>/revoke`, `POST /api/admin/versions/<version>/restore`, and `GET /api/admin/audit-logs`.
 
 `/latest` returns a Tauri-compatible manifest with UTC `pub_date`, `published_at`, and `force_update`, server-generated ETags, and only `https://update.axlmc.org/dist/...` URLs. `force_update=true` tells Launcher to bypass its normal 24-hour Release delay; it never bypasses pause settings or signature verification. It returns `204` when no compatible update exists. ETag/304 is optional optimization and not required by the Launcher. Flask's development `/dist/<version>/<filename>` fallback supports GET, HEAD, and Range; revoked files remain downloadable by direct URL, but are never returned by `/latest`.
 
-Webhook payloads may include `"force_update": true` (default is `false`):
+Webhook payloads include public GitHub Release metadata and a catalog. `release.published_at` remains the update publication time. `catalog.files` lists all physical assets (including signatures), while `catalog.artifacts` lists only main updater/installer/portable artifacts. Updater artifacts must name their `.sig` companion with `signatureFilename`; its trimmed UTF-8 content becomes the Tauri signature. Complete packages may have an attachment but do not require a Tauri signature. Payloads may include `"force_update": true` (default is `false`):
 
 ```json
-{"event_id":"release-1.10.0","tag":"v1.10.0","version":"1.10.0","channel":"release","force_update":true,"artifacts":[{"platform":"windows-x86_64","filename":"update.zip","size":123,"sha256":"...","signature":"..."}]}
+{"event_id":"github-v1.10.0-123","tag":"v1.10.0","version":"1.10.0","channel":"release","force_update":true,"release":{"id":123,"tag_name":"v1.10.0","draft":false,"published_at":"2026-08-30T10:00:00Z","assets":[]},"catalog":{"version":"1.10.0","files":[],"artifacts":[]}}
 ```
 
 Webhook retries with the same event ID and payload hash are safe; a failed event may be retried after fixing artifacts. Reusing an event ID with a different payload is rejected.
 
-The automatic updater and the complete package catalog are separate: `/latest` contains only signed Tauri updater artifacts, while `/api/downloads/*` is for website/manual downloads. GitHub Release and CNB Release remain the Launcher repository's publishing records; Launcher automatic updates use only this Update Server.
+The automatic updater and the complete package catalog are separate: `/latest` contains only signed Tauri updater artifacts, while `/api/downloads/*` is for website/manual downloads. GitHub Release and CNB Release remain publishing records and manual-download sources; Launcher automatic updates use only this Update Server.
 
 Revoking a version removes it from `/latest` and download-directory latest selection while retaining its immutable `/dist/<version>/...` URLs for in-progress or previously published links. A separate `blocked` artifact state is intentionally not enabled yet; urgent takedowns should be handled at the Caddy/object-storage layer until that policy is introduced with an audited migration.
 
@@ -48,7 +48,7 @@ Copy `Caddyfile.example` to the Caddy configuration. It routes `/dist/*` to `/ww
 gunicorn --workers 2 --bind 127.0.0.1:8082 wsgi:app
 ```
 
-Back up both the SQLite database (`instance/update-server.db` by default) and the complete `DIST_ROOT` tree. Never commit `.env`, database files, or artifacts. `MAX_UPLOAD_SIZE` limits request bodies and `WEBHOOK_MAX_AGE_SECONDS` limits replay windows.
+Back up both the SQLite database (`instance/update-server.db` by default) and the complete `DIST_ROOT` tree. Never commit `.env`, database files, or artifacts. `MAX_UPLOAD_SIZE` limits manual request bodies and `WEBHOOK_MAX_AGE_SECONDS` limits replay windows. GitHub imports are bounded by `GITHUB_DOWNLOAD_CONNECT_TIMEOUT_SECONDS`, `GITHUB_DOWNLOAD_READ_TIMEOUT_SECONDS`, `GITHUB_DOWNLOAD_RETRIES`, and `GITHUB_DOWNLOAD_MAX_SIZE`.
 
 The built-in rate limiter is process-local and intended as a baseline safeguard. With multiple Gunicorn workers, use a shared proxy/Redis limiter for consistent enforcement.
 

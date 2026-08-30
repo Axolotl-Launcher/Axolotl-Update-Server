@@ -22,6 +22,10 @@ def app():
         WEBHOOK_SECRET = "webhook"
         WEBHOOK_MAX_AGE_SECONDS = 300
         MAX_CONTENT_LENGTH = 1024 * 1024
+        GITHUB_DOWNLOAD_MAX_SIZE = 1024 * 1024
+        GITHUB_DOWNLOAD_RETRIES = 0
+        GITHUB_DOWNLOAD_READ_TIMEOUT_SECONDS = 1
+        GITHUB_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 1
 
     application = create_app(TestConfig)
     with application.app_context():

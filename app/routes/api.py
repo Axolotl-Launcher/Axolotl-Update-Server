@@ -15,6 +15,7 @@ from ..auth import require_admin, require_upload_token
 from ..errors import ApiError
 from ..extensions import db
 from ..models import Artifact, AuditLog, ChannelPointer, Version, WebhookEvent, utcnow
+from ..services.github_release import download_file, prepare_catalog
 from ..services.retention import prune_dist
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -35,7 +36,7 @@ def parse_version(value: str) -> SemVersion:
 
 
 def json_version(v: Version):
-    return {"version": v.version, "channel": v.channel, "status": v.status, "notes": v.notes or "", "release_tag": v.release_tag, "release_id": v.release_id, "published_at": v.published_at.isoformat() if v.published_at else None, "minimum_version": v.minimum_version, "force_update": bool(v.force_update), "artifacts": [{"platform": a.platform, "architecture": a.architecture, "kind": a.kind, "variant": a.variant, "display_name": a.display_name, "sort_order": a.sort_order, "is_public": a.is_public, "filename": a.filename, "relative_path": a.relative_path, "size": a.size, "sha256": a.sha256, "signature": a.signature, "content_type": a.content_type} for a in v.artifacts]}
+    return {"version": v.version, "channel": v.channel, "status": v.status, "notes": v.notes or "", "release_tag": v.release_tag, "release_id": v.release_id, "published_at": v.published_at.isoformat() if v.published_at else None, "minimum_version": v.minimum_version, "force_update": bool(v.force_update), "artifacts": [{"platform": a.platform, "architecture": a.architecture, "kind": a.kind, "variant": a.variant, "display_name": a.display_name, "sort_order": a.sort_order, "is_public": a.is_public, "filename": a.filename, "relative_path": a.relative_path, "size": a.size, "sha256": a.sha256, "signature": a.signature, "signature_filename": a.signature_filename, "content_type": a.content_type} for a in v.artifacts]}
 
 
 def validate_filename(filename: str):
@@ -175,7 +176,7 @@ def artifact_json(a):
 
 
 def download_json(a):
-    return {"id": a.id, "kind": a.kind, "platform": a.platform, "architecture": a.architecture, "variant": a.variant, "label": a.display_name or a.filename, "display_name": a.display_name or a.filename, "sort_order": a.sort_order, "filename": a.filename, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}", "size": a.size, "sha256": a.sha256, "signature": a.signature}
+    return {"id": a.id, "kind": a.kind, "platform": a.platform, "architecture": a.architecture, "variant": a.variant, "label": a.display_name or a.filename, "display_name": a.display_name or a.filename, "sort_order": a.sort_order, "filename": a.filename, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}", "size": a.size, "sha256": a.sha256, "signature": a.signature, "signature_filename": a.signature_filename}
 
 
 def eligible_versions(channel: str):
@@ -291,10 +292,21 @@ def release_webhook():
     if event is None:
         event = WebhookEvent(event_id=event_id, payload_hash=phash)
         db.session.add(event)
+    staging = None
+    moved_files = []
+    manifest_path = None
+    manifest_temp = None
+    manifest_written = False
     try:
-        version = payload.get("version", ""); tag = payload.get("tag", ""); channel = payload.get("channel", "")
+        version = payload.get("version", "")
+        tag = payload.get("tag", "")
+        channel = payload.get("channel", "")
         parsed = parse_version(version)
-        if tag not in (version, f"v{version}") or channel not in ("release", "beta"):
+        release = payload.get("release")
+        catalog = payload.get("catalog")
+        if not isinstance(release, dict) or not isinstance(catalog, dict):
+            raise ApiError("invalid_webhook", "release and catalog are required.")
+        if tag != f"v{version}" or channel not in ("release", "beta"):
             raise ApiError("invalid_webhook", "Version, tag, and channel are inconsistent.")
         if channel == "release" and parsed.prerelease:
             raise ApiError("prerelease_release", "Release channel cannot publish prerelease versions.")
@@ -302,65 +314,146 @@ def release_webhook():
             raise ApiError("stable_beta", "Beta channel requires a prerelease version.")
         if not isinstance(payload.get("force_update", False), bool):
             raise ApiError("invalid_force_update", "force_update must be a boolean.")
-        v = Version.query.filter_by(version=version).first() or Version(version=version, channel=channel)
-        v.channel, v.notes, v.release_tag, v.release_id = channel, payload.get("notes", ""), tag, str(payload.get("release_id", ""))
-        v.force_update = bool(payload.get("force_update", False))
-        v.published_at = datetime.fromisoformat(payload.get("published_at", utcnow().isoformat()).replace("Z", "+00:00"))
-        artifacts = payload.get("artifacts", [])
-        seen_platforms = set()
-        seen_variants = set()
-        required = {a.get("platform") for a in artifacts}
+        if not release.get("id"):
+            raise ApiError("invalid_github_release", "GitHub Release id is required.")
+        published_raw = release.get("published_at")
+        if not isinstance(published_raw, str):
+            raise ApiError("invalid_github_release", "GitHub Release published_at is required.")
+        try:
+            published_at = datetime.fromisoformat(published_raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ApiError("invalid_github_release", "GitHub Release published_at is invalid.") from exc
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=timezone.utc)
+        artifacts, files = prepare_catalog(release, catalog, version, tag)
+        if not artifacts:
+            raise ApiError("missing_artifacts", "At least one complete artifact is required.")
+
+        existing_version = Version.query.filter_by(version=version).first()
+        if existing_version and existing_version.status == "published":
+            raise ApiError("version_immutable", "Published versions cannot be imported again.", 409)
+        v = existing_version or Version(version=version, channel=channel, status="uploading")
+        v.channel, v.notes, v.release_tag, v.release_id = channel, release.get("body", ""), tag, str(release["id"])
+        v.force_update, v.published_at, v.status = bool(payload.get("force_update", False)), published_at, "uploading"
+        db.session.add(v)
+        db.session.flush()
+
+        staging = Path(current_app.config["DIST_ROOT"]) / ".staging" / event_id
+        staging.mkdir(parents=True, exist_ok=True)
+        for filename, info in files.items():
+            validate_filename(filename)
+            download_file(info["url"], staging / filename, info["size"], info["sha256"])
+
+        by_filename = {a.get("filename"): a for a in artifacts if isinstance(a, dict)}
+        if len(by_filename) != len(artifacts):
+            raise ApiError("duplicate_artifact", "Catalog artifact filenames must be unique.")
+        seen_updater_platforms = set()
+        primary_rows = []
+        referenced_signatures = set()
         for a_data in artifacts:
-            artifact_platform = a_data.get("platform")
-            artifact_kind = a_data.get("kind", "updater")
-            artifact_arch = a_data.get("architecture") or ("aarch64" if "aarch64" in (artifact_platform or "") else "x86_64")
-            artifact_variant = a_data.get("variant", "")
-            if artifact_platform not in PLATFORMS | PACKAGE_PLATFORMS or artifact_arch not in ARCHITECTURES:
+            artifact_filename = a_data.get("filename")
+            if not isinstance(artifact_filename, str) or artifact_filename not in files:
+                raise ApiError("invalid_catalog", "Every artifact must reference a catalog file.")
+            validate_filename(artifact_filename)
+            kind = a_data.get("kind", "updater")
+            platform = a_data.get("platform")
+            architecture = a_data.get("architecture") or ("aarch64" if "aarch64" in (platform or "") else "x86_64")
+            variant = a_data.get("variant", "")
+            if kind not in ARTIFACT_KINDS - {"signature", "manifest", "other"}:
+                raise ApiError("invalid_artifact_kind", "Catalog artifact kind is not supported.")
+            if platform not in (PLATFORMS | PACKAGE_PLATFORMS) or architecture not in ARCHITECTURES:
                 raise ApiError("invalid_artifact_platform", "Artifact platform or architecture is invalid.")
-            if artifact_kind == "updater" and artifact_platform not in PLATFORMS:
-                raise ApiError("invalid_updater_platform", "Updater artifacts require a launcher platform key.")
-            if artifact_kind not in ARTIFACT_KINDS:
-                raise ApiError("invalid_artifact_kind", "Artifact kind is not supported.")
-            identity = (artifact_kind, artifact_platform, artifact_arch, artifact_variant, a_data.get("filename") if artifact_kind == "signature" else "")
-            if identity in seen_variants or (artifact_kind == "updater" and artifact_platform in seen_platforms):
-                raise ApiError("duplicate_artifact", "Artifact kind, platform, architecture, and variant must be unique.")
-            seen_variants.add(identity)
-            seen_platforms.add(artifact_platform)
-            if not a_data.get("filename"):
-                raise ApiError("invalid_filename", "Artifact filename is required.")
-            validate_filename(a_data["filename"])
-            a = Artifact.query.filter_by(relative_path=f"dist/{version}/{a_data.get('filename')}").first()
-            path = Path(current_app.config["DIST_ROOT"]) / version / (a_data.get("filename") or "")
-            actual_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
-            actual_size = path.stat().st_size if path.is_file() else -1
-            signature_required = artifact_kind == "updater"
-            if (not a or a.version_id != v.id or a.kind != artifact_kind or a.platform != artifact_platform or a.architecture != artifact_arch or a.variant != artifact_variant or a.relative_path != f"dist/{version}/{a.filename}" or actual_hash != a.sha256 or actual_size != a.size or a.sha256 != a_data.get("sha256") or a.size != a_data.get("size") or (signature_required and not a_data.get("signature"))):
-                raise ApiError("artifact_validation_failed", "Webhook artifact validation failed.")
-            a.signature = a_data.get("signature")
-            a.display_name = a_data.get("display_name") or a.display_name or a.filename
-            a.sort_order = int(a_data.get("sort_order", a.sort_order or 0))
-            is_public = a_data.get("is_public", a.is_public)
+            signature_filename: str | None = None
+            tauri_signature: str | None = None
+            if kind == "updater":
+                if platform not in PLATFORMS or platform in seen_updater_platforms:
+                    raise ApiError("duplicate_artifact", "Updater platforms must be unique.")
+                seen_updater_platforms.add(platform)
+                signature_filename = a_data.get("signatureFilename") or a_data.get("signature_filename")
+                if not isinstance(signature_filename, str) or signature_filename not in files:
+                    raise ApiError("missing_signature", "Updater artifacts require a catalog signature file.")
+                referenced_signatures.add(signature_filename)
+                try:
+                    tauri_signature = (staging / signature_filename).read_text(encoding="utf-8").strip()
+                except (OSError, UnicodeError) as exc:
+                    raise ApiError("invalid_signature", "Updater signature file is invalid.") from exc
+                if not tauri_signature:
+                    raise ApiError("invalid_signature", "Updater signature file is empty.")
+            else:
+                signature_filename = a_data.get("signatureFilename") or a_data.get("signature_filename")
+                if signature_filename is not None and not isinstance(signature_filename, str):
+                    raise ApiError("invalid_signature", "Artifact signature filename is invalid.")
+                if signature_filename:
+                    if signature_filename not in files:
+                        raise ApiError("invalid_signature", "Artifact signature file is not in the catalog.")
+                    referenced_signatures.add(signature_filename)
+            if len(str(variant)) > 32 or len(str(a_data.get("display_name", ""))) > 160:
+                raise ApiError("invalid_artifact_metadata", "Artifact display metadata is too long.")
+            info = files[artifact_filename]
+            primary_rows.append({"data": a_data, "filename": artifact_filename, "kind": kind, "platform": platform, "architecture": architecture, "variant": variant, "signature_filename": signature_filename, "signature": tauri_signature, "info": info})
+
+        # Move only validated downloads into the public version directory.
+        version_dir = Path(current_app.config["DIST_ROOT"]) / version
+        version_dir.mkdir(parents=True, exist_ok=True)
+        for filename in files:
+            destination = version_dir / filename
+            if destination.exists():
+                if destination.stat().st_size != files[filename]["size"] or hashlib.sha256(destination.read_bytes()).hexdigest() != files[filename]["sha256"]:
+                    raise ApiError("artifact_exists", "A stored artifact has different content.", 409)
+                (staging / filename).unlink(missing_ok=True)
+            else:
+                os.replace(staging / filename, destination)
+                moved_files.append(destination)
+
+        existing_rows = {a.filename: a for a in v.artifacts}
+        for row in primary_rows:
+            info = row["info"]
+            artifact = existing_rows.get(row["filename"])
+            if artifact and (artifact.sha256 != info["sha256"] or artifact.size != info["size"]):
+                raise ApiError("artifact_exists", "Artifact metadata has changed.", 409)
+            if not artifact:
+                artifact = Artifact(version_id=v.id, filename=row["filename"], relative_path=f"dist/{version}/{row['filename']}")
+                db.session.add(artifact)
+            data = row["data"]
+            is_public = data.get("is_public", True)
             if not isinstance(is_public, bool):
                 raise ApiError("invalid_artifact_metadata", "is_public must be a boolean.")
-            a.is_public = is_public
-        if not artifacts or not required:
-            raise ApiError("missing_artifacts", "At least one complete artifact is required.")
-        v.status = "published"; db.session.add(v)
-        manifest = {
-            "version": v.version,
-            "notes": v.notes or "",
-            "pub_date": v.published_at.isoformat().replace("+00:00", "Z"),
-            "published_at": v.published_at.isoformat().replace("+00:00", "Z"),
-            "force_update": bool(v.force_update),
-            "platforms": {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in v.artifacts if a.kind == "updater" and a.signature},
-        }
+            artifact.platform, artifact.architecture, artifact.kind = row["platform"], row["architecture"], row["kind"]
+            artifact.variant, artifact.display_name = row["variant"], data.get("display_name") or row["filename"]
+            artifact.sort_order, artifact.is_public = int(data.get("sort_order", 0)), is_public
+            artifact.size, artifact.sha256 = info["size"], info["sha256"]
+            artifact.signature_filename, artifact.signature = row["signature_filename"], row["signature"]
+            artifact.content_type = mimetypes.guess_type(row["filename"])[0] or "application/octet-stream"
+        for filename, info in files.items():
+            if filename in by_filename:
+                continue
+            if filename not in referenced_signatures:
+                raise ApiError("invalid_catalog", "Every catalog file must be an artifact or signature attachment.")
+            sig = Artifact.query.filter_by(version_id=v.id, filename=filename).first()
+            if not sig:
+                sig = Artifact(version_id=v.id, filename=filename, relative_path=f"dist/{version}/{filename}")
+                db.session.add(sig)
+            sig.platform, sig.architecture, sig.kind, sig.variant = "", "", "signature", ""
+            sig.display_name, sig.is_public = filename, False
+            sig.size, sig.sha256 = info["size"], info["sha256"]
+            sig.signature, sig.signature_filename = None, None
+            sig.content_type = "application/octet-stream"
+        db.session.flush()
+        db.session.expire(v, ["artifacts"])
+        manifest = {"version": v.version, "notes": v.notes or "", "pub_date": published_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "published_at": published_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "force_update": bool(v.force_update), "platforms": {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in v.artifacts if a.kind == "updater" and a.signature}}
+        if not manifest["platforms"]:
+            raise ApiError("missing_artifacts", "At least one signed updater artifact is required.")
         manifest_path = Path(current_app.config["DIST_ROOT"]) / version / "manifest.json"
         with tempfile.NamedTemporaryFile(dir=manifest_path.parent, mode="w", encoding="utf-8", delete=False) as tmp:
             json.dump(manifest, tmp, indent=2)
-            temp_manifest = tmp.name
-        Path(temp_manifest).replace(manifest_path)
+            tmp.flush(); os.fsync(tmp.fileno())
+            manifest_temp = Path(tmp.name)
+        os.replace(manifest_temp, manifest_path)
+        manifest_written = True
+        v.status = "published"
         pointer = db.session.get(ChannelPointer, channel) or ChannelPointer(channel=channel)
-        pointer.current_version = pointer_candidate(channel); db.session.add(pointer)
+        pointer.current_version = pointer_candidate(channel)
+        db.session.add(pointer)
         event.status, event.processed_at = "processed", utcnow()
         db.session.commit()
         try:
@@ -370,11 +463,38 @@ def release_webhook():
             )
         except Exception:
             current_app.logger.exception("Artifact retention cleanup failed")
+        if staging:
+            import shutil
+            shutil.rmtree(staging, ignore_errors=True)
         return jsonify({"status": "published", "version": version})
     except ApiError as exc:
-        db.session.rollback(); event = db.session.get(WebhookEvent, event_id) or event; event.status, event.error_message = "failed", exc.message; db.session.add(event); db.session.commit(); raise
+        db.session.rollback()
+        if manifest_temp:
+            manifest_temp.unlink(missing_ok=True)
+        for path in moved_files:
+            path.unlink(missing_ok=True)
+        if manifest_written and manifest_path:
+            manifest_path.unlink(missing_ok=True)
+        if staging:
+            import shutil
+            shutil.rmtree(staging, ignore_errors=True)
+        event = db.session.get(WebhookEvent, event_id) or event
+        event.status, event.error_message = "failed", exc.message
+        db.session.add(event); db.session.commit(); raise
     except (ValueError, OSError) as exc:
-        db.session.rollback(); event = db.session.get(WebhookEvent, event_id) or event; event.status, event.error_message = "failed", "Webhook validation or publication failed."; db.session.add(event); db.session.commit()
+        db.session.rollback()
+        if manifest_temp:
+            manifest_temp.unlink(missing_ok=True)
+        for path in moved_files:
+            path.unlink(missing_ok=True)
+        if manifest_written and manifest_path:
+            manifest_path.unlink(missing_ok=True)
+        if staging:
+            import shutil
+            shutil.rmtree(staging, ignore_errors=True)
+        event = db.session.get(WebhookEvent, event_id) or event
+        event.status, event.error_message = "failed", "Webhook validation or publication failed."
+        db.session.add(event); db.session.commit()
         raise ApiError("webhook_failed", "Webhook validation or publication failed.") from exc
 
 
@@ -386,7 +506,7 @@ def _admin_change(version, restore=False):
     if restore:
         for a in v.artifacts:
             path = Path(current_app.config["DIST_ROOT"]) / version / a.filename
-            if not path.exists() or path.stat().st_size != a.size or hashlib.sha256(path.read_bytes()).hexdigest() != a.sha256 or not a.signature:
+            if not path.exists() or path.stat().st_size != a.size or hashlib.sha256(path.read_bytes()).hexdigest() != a.sha256 or (a.kind == "updater" and not a.signature):
                 raise ApiError("artifact_validation_failed", "Cannot restore with incomplete artifacts.")
         v.status, v.revoked_at, v.revoke_reason = "published", None, None
         action = "restore"

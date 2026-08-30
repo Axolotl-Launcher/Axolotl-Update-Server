@@ -13,9 +13,9 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_object)
     if app.config.get("FLASK_ENV") == "production":
-        required = ("SECRET_KEY", "UPLOAD_TOKEN", "WEBHOOK_SECRET", "ADMIN_TOKEN")
+        required = ("SECRET_KEY", "WEBHOOK_SECRET", "ADMIN_TOKEN")
         if any(not app.config.get(name) or app.config.get(name) == "dev-only-change-me" for name in required):
-            raise RuntimeError("Production requires non-empty SECRET_KEY, UPLOAD_TOKEN, WEBHOOK_SECRET, and ADMIN_TOKEN")
+            raise RuntimeError("Production requires non-empty SECRET_KEY, WEBHOOK_SECRET, and ADMIN_TOKEN")
     Path(app.config["DIST_ROOT"]).mkdir(parents=True, exist_ok=True)
     db.init_app(app)
     migrate.init_app(app, db)

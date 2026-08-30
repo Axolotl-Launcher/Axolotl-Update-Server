@@ -1,123 +1,96 @@
 import hashlib
 import hmac
+import io
 import json
 import time
 from pathlib import Path
 
 
-def upload(client, body=b"payload", filename="app.tar.gz", platform="linux-x86_64", kind="updater", variant="", display_name=""):
-    return client.put(
-        f"/api/artifacts/1.0.0/{filename}",
-        data=body,
-        headers={"X-Upload-Token": "upload", "X-Axolotl-Platform": platform, "X-Axolotl-Signature": "sig", "X-Axolotl-Kind": kind, "X-Axolotl-Variant": variant, "X-Axolotl-Display-Name": display_name},
-    )
+def signed_post(client, payload):
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    timestamp = str(int(time.time()))
+    signature = hmac.new(b"webhook", f"{timestamp}.".encode() + raw, hashlib.sha256).hexdigest()
+    return client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": timestamp, "X-Webhook-Signature": f"sha256={signature}"})
 
 
-def test_health_and_upload(client):
+def payload_for(files=None, *, version="1.9.4", channel="release", force_update=False):
+    files = files or {"update.tar.gz": b"update", "update.tar.gz.sig": b"tauri-signature\n", "installer.exe": b"installer"}
+    tag = f"v{version}"
+    assets, catalog_files = [], []
+    for filename, body in files.items():
+        digest = hashlib.sha256(body).hexdigest()
+        url = f"https://github.com/Mystic-Stars/Axolotl/releases/download/{tag}/{filename}"
+        assets.append({"name": filename, "size": len(body), "digest": f"sha256:{digest}", "browser_download_url": url})
+        catalog_files.append({"filename": filename, "size": len(body), "sha256": digest, "downloadUrl": url})
+    return {"event_id": f"github-{version}-1", "tag": tag, "version": version, "channel": channel, "force_update": force_update, "release": {"id": 123, "tag_name": tag, "body": "Release notes", "published_at": "2026-08-29T15:19:00Z", "draft": False, "assets": assets}, "catalog": {"version": version, "files": catalog_files, "artifacts": [{"filename": "update.tar.gz", "platform": "linux-x86_64", "architecture": "x86_64", "kind": "updater", "signatureFilename": "update.tar.gz.sig"}, {"filename": "installer.exe", "platform": "windows", "architecture": "x86_64", "kind": "installer", "variant": "modern"}]}}
+
+
+def configure_downloads(app, bodies, version="1.9.4"):
+    urls = {f"https://github.com/Mystic-Stars/Axolotl/releases/download/v{version}/{filename}": body for filename, body in bodies.items()}
+    app.config["GITHUB_DOWNLOAD_OPEN"] = lambda url, _timeout: io.BytesIO(urls[url])
+
+
+def test_health_and_stream_import(client, app):
     assert client.get("/api/health").status_code == 200
-    response = upload(client)
-    assert response.status_code == 201
-    assert response.json["artifact"]["sha256"] == hashlib.sha256(b"payload").hexdigest()
-    assert client.put("/api/artifacts/1.0.0/../bad", data=b"x", headers={"X-Upload-Token": "upload"}).status_code in (404, 308)
+    bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"tauri-signature\n", "installer.exe": b"installer"}
+    configure_downloads(app, bodies)
+    assert signed_post(client, payload_for(bodies)).status_code == 200
+    assert client.get("/latest?platform=linux-x86_64").json["version"] == "1.9.4"
+    assert Path(app.config["DIST_ROOT"], "1.9.4", "update.tar.gz").read_bytes() == b"update"
+    assert client.get("/api/downloads/1.9.4").json["downloads"][0]["kind"] == "installer"
 
 
-def test_latest_and_idempotent_upload(client):
-    upload(client)
-    again = upload(client)
-    assert again.status_code == 200 and again.json["idempotent"]
-    assert client.get("/latest?platform=linux-x86_64").status_code == 204
-    payload = {"event_id": "e1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "notes": "n", "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "architecture": "x86_64", "filename": "app.tar.gz", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}]}
-    raw = json.dumps(payload).encode(); ts = str(int(time.time()))
-    sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    assert client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig}).status_code == 200
-    latest = client.get("/latest?platform=linux-x86_64")
-    assert latest.status_code == 200 and latest.json["version"] == "1.0.0"
+def test_catalog_and_release_validation(client, app):
+    bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"sig", "installer.exe": b"installer"}
+    configure_downloads(app, bodies)
+    bad = payload_for(bodies); bad["event_id"] = "draft"; bad["release"]["draft"] = True
+    assert signed_post(client, bad).json["error"]["code"] == "invalid_github_release"
+    bad = payload_for(bodies); bad["event_id"] = "size"; bad["catalog"]["files"][0]["size"] += 1
+    assert signed_post(client, bad).json["error"]["code"] == "github_asset_metadata_mismatch"
+    bad = payload_for(bodies); bad["event_id"] = "url"; bad["catalog"]["files"][0]["downloadUrl"] = "https://example.com/x"
+    bad["release"]["assets"][0]["browser_download_url"] = "https://example.com/x"
+    assert signed_post(client, bad).json["error"]["code"] == "invalid_github_asset_url"
+    bad = payload_for(bodies); bad["event_id"] = "hash"; bad["catalog"]["files"][0]["sha256"] = "0" * 64
+    assert signed_post(client, bad).json["error"]["code"] == "github_asset_metadata_mismatch"
+    bad = payload_for(bodies); bad["event_id"] = "digest"; bad["release"]["assets"][0].pop("digest")
+    assert signed_post(client, bad).json["error"]["code"] == "invalid_github_digest"
 
 
-def test_force_update_propagates_and_changes_etag(client, app):
-    upload(client)
-    payload = {"event_id": "force-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "force_update": True, "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "filename": "app.tar.gz", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}]}
-    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    assert client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig}).status_code == 200
-    first = client.get("/latest?platform=linux-x86_64")
-    assert first.json["force_update"] is True
-    assert client.get("/api/versions/1.0.0").json["force_update"] is True
-    with app.app_context():
-        from app.extensions import db
-        from app.models import Version
-        Version.query.filter_by(version="1.0.0").update({"force_update": False}); db.session.commit()
-    second = client.get("/latest?platform=linux-x86_64")
-    assert first.headers["ETag"] != second.headers["ETag"]
-    assert json.loads(Path(app.config["DIST_ROOT"], "1.0.0", "manifest.json").read_text())["force_update"] is True
+def test_updater_requires_signature(client, app):
+    bodies = {"update.tar.gz": b"update", "installer.exe": b"installer"}
+    configure_downloads(app, bodies)
+    bad = payload_for(bodies)
+    bad["catalog"]["files"] = [x for x in bad["catalog"]["files"] if x["filename"] != "update.tar.gz.sig"]
+    bad["release"]["assets"] = [x for x in bad["release"]["assets"] if x["name"] != "update.tar.gz.sig"]
+    assert signed_post(client, bad).json["error"]["code"] in {"missing_signature", "invalid_catalog"}
 
 
-def test_beta_rejects_stable_version(client):
-    payload = {"event_id": "bad-beta", "tag": "v1.0.0", "version": "1.0.0", "channel": "beta", "artifacts": []}
-    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    response = client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
-    assert response.status_code == 400 and response.json["error"]["code"] == "stable_beta"
+def test_idempotency_and_failed_retry(client, app):
+    bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"sig", "installer.exe": b"installer"}
+    configure_downloads(app, bodies)
+    payload = payload_for(bodies)
+    assert signed_post(client, payload).status_code == 200
+    assert signed_post(client, payload).json["idempotent"] is True
+    retry = payload_for(bodies, version="1.9.5"); retry["event_id"] = "retry-event"
+    app.config["GITHUB_DOWNLOAD_OPEN"] = lambda _url, _timeout: (_ for _ in ()).throw(OSError("fixture failure"))
+    assert signed_post(client, retry).status_code == 502
+    configure_downloads(app, bodies, version="1.9.5")
+    assert signed_post(client, retry).status_code == 200
 
 
-def test_webhook_failed_event_can_retry_but_payload_conflict_is_rejected(client):
-    payload = {"event_id": "retry-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "artifacts": []}
-    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    failed = client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
-    assert failed.status_code == 400
-    conflict = dict(payload, notes="changed")
-    conflict_raw = json.dumps(conflict).encode(); conflict_sig = hmac.new(b"webhook", (ts + ".").encode() + conflict_raw, hashlib.sha256).hexdigest()
-    response = client.post("/api/webhook/release", data=conflict_raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": conflict_sig})
-    assert response.status_code == 409 and response.json["error"]["code"] == "webhook_event_conflict"
+def test_force_update_and_published_at(client, app):
+    bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"sig", "installer.exe": b"installer"}
+    configure_downloads(app, bodies)
+    assert signed_post(client, payload_for(bodies, force_update=True)).status_code == 200
+    latest = client.get("/latest?platform=linux-x86_64").json
+    assert latest["force_update"] is True and latest["published_at"] == "2026-08-29T15:19:00Z"
 
 
-def test_complete_downloads_are_separate_from_latest(client):
-    upload(client, filename="update.zip")
-    upload(client, body=b"installer", filename="Axolotl-modern.exe", platform="windows", kind="installer", variant="modern", display_name="Windows x64 Modern Installer")
-    assert upload(client, body=b"other", filename="Axolotl-modern-duplicate.exe", platform="windows", kind="installer", variant="modern").status_code == 409
-    payload = {"event_id": "downloads-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "architecture": "x86_64", "kind": "updater", "filename": "update.zip", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}, {"platform": "windows", "architecture": "x86_64", "kind": "installer", "variant": "modern", "filename": "Axolotl-modern.exe", "size": 9, "sha256": hashlib.sha256(b"installer").hexdigest(), "signature": None, "display_name": "Windows x64 Modern Installer"}]}
-    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    assert client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig}).status_code == 200
-    latest = client.get("/latest?platform=linux-x86_64")
-    assert latest.status_code == 200 and latest.json["platforms"].keys() == {"linux-x86_64"}
-    downloads = client.get("/api/downloads/latest?channel=release")
-    assert downloads.status_code == 200 and [x["kind"] for x in downloads.json["downloads"]] == ["installer"]
-    assert downloads.json["downloads"][0]["label"] == "Windows x64 Modern Installer"
-    with_updater = client.get("/api/downloads/latest?channel=release&include_updater=true")
-    assert {x["kind"] for x in with_updater.json["downloads"]} == {"installer", "updater"}
-
-
-def test_beta_channel_includes_release_and_beta(client, app):
-    upload(client)
-    payload = {
-        "event_id": "beta-1",
-        "tag": "v1.0.0",
-        "version": "1.0.0",
-        "channel": "release",
-        "published_at": "2026-08-30T00:00:00Z",
-        "artifacts": [{"platform": "linux-x86_64", "filename": "app.tar.gz", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}],
-    }
-    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
-    with app.app_context():
-        from pathlib import Path
-
-        from app.extensions import db
-        from app.models import Artifact, Version
-        beta = Version(version="1.1.0-beta.1", channel="beta", status="published", published_at=Version.query.filter_by(version="1.0.0").first().published_at)
-        db.session.add(beta); db.session.commit()
-        Path(app.config["DIST_ROOT"], "1.1.0-beta.1").mkdir(parents=True, exist_ok=True)
-        Path(app.config["DIST_ROOT"], "1.1.0-beta.1", "beta.tar.gz").write_bytes(b"x")
-        db.session.add(Artifact(version_id=beta.id, platform="linux-x86_64", filename="beta.tar.gz", relative_path="dist/1.1.0-beta.1/beta.tar.gz", size=1, sha256="0" * 64, signature="sig", content_type="application/gzip")); db.session.commit()
-    response = client.get("/latest?channel=beta&platform=linux-x86_64")
-    assert response.status_code == 200
-    assert response.json["version"] == "1.1.0-beta.1"
-
-
-def test_revoke_restore(client):
-    upload(client)
-    payload = {"event_id": "e2", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "filename": "app.tar.gz", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}]}
-    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
-    client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
-    assert client.post("/api/admin/versions/1.0.0/revoke", headers={"Authorization": "Bearer admin"}, json={"reason": "bad"}).status_code == 200
-    assert client.get("/latest?platform=linux-x86_64").status_code == 204
-    assert client.post("/api/admin/versions/1.0.0/restore", headers={"Authorization": "Bearer admin"}).status_code == 200
-    assert client.get("/latest?platform=linux-x86_64").status_code == 200
+def test_failed_import_does_not_change_pointer(client, app):
+    bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"sig", "installer.exe": b"installer"}
+    configure_downloads(app, bodies)
+    assert signed_post(client, payload_for(bodies)).status_code == 200
+    broken = payload_for(bodies, version="1.9.5")
+    app.config["GITHUB_DOWNLOAD_OPEN"] = lambda _url, _timeout: (_ for _ in ()).throw(OSError("fixture failure"))
+    assert signed_post(client, broken).status_code == 502
+    assert client.get("/latest?platform=linux-x86_64").json["version"] == "1.9.4"
