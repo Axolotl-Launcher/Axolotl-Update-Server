@@ -1,6 +1,7 @@
 import hashlib
 import json
 import mimetypes
+import os
 import re
 import secrets
 import tempfile
@@ -123,7 +124,13 @@ def upload_artifact(version, filename):
         if existing.sha256 == digest and existing.size == size:
             return jsonify({"artifact": artifact_json(existing), "idempotent": True})
         raise ApiError("artifact_exists", "An artifact with a different hash already exists.", 409)
-    Path(temp_name).replace(path)
+    try:
+        os.link(temp_name, path)
+    except FileExistsError:
+        Path(temp_name).unlink(missing_ok=True)
+        raise ApiError("artifact_exists", "An artifact file already exists.", 409) from None
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
     artifact = Artifact(version_id=v.id, platform=request.headers.get("X-Axolotl-Platform", ""), architecture=request.headers.get("X-Axolotl-Architecture", ""), filename=filename, relative_path=f"dist/{version}/{filename}", size=size, sha256=digest, signature=request.headers.get("X-Axolotl-Signature"), content_type=request.headers.get("Content-Type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
     db.session.add(artifact); db.session.commit()
     return jsonify({"artifact": artifact_json(artifact), "idempotent": False}), 201

@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+from pathlib import Path
 
 
 def upload(client, body=b"payload", filename="app.tar.gz", platform="linux-x86_64"):
@@ -47,6 +48,7 @@ def test_force_update_propagates_and_changes_etag(client, app):
         Version.query.filter_by(version="1.0.0").update({"force_update": False}); db.session.commit()
     second = client.get("/latest?platform=linux-x86_64")
     assert first.headers["ETag"] != second.headers["ETag"]
+    assert json.loads(Path(app.config["DIST_ROOT"], "1.0.0", "manifest.json").read_text())["force_update"] is True
 
 
 def test_beta_rejects_stable_version(client):
@@ -54,6 +56,17 @@ def test_beta_rejects_stable_version(client):
     raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
     response = client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
     assert response.status_code == 400 and response.json["error"]["code"] == "stable_beta"
+
+
+def test_webhook_failed_event_can_retry_but_payload_conflict_is_rejected(client):
+    payload = {"event_id": "retry-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "artifacts": []}
+    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
+    failed = client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
+    assert failed.status_code == 400
+    conflict = dict(payload, notes="changed")
+    conflict_raw = json.dumps(conflict).encode(); conflict_sig = hmac.new(b"webhook", (ts + ".").encode() + conflict_raw, hashlib.sha256).hexdigest()
+    response = client.post("/api/webhook/release", data=conflict_raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": conflict_sig})
+    assert response.status_code == 409 and response.json["error"]["code"] == "webhook_event_conflict"
 
 
 def test_beta_channel_includes_release_and_beta(client, app):
