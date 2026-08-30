@@ -21,3 +21,5 @@ class Config:
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE", str(512 * 1024 * 1024)))
     WEBHOOK_MAX_AGE_SECONDS = int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300"))
     RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
+    RELEASE_RETENTION_COUNT = int(os.getenv("RELEASE_RETENTION_COUNT", "3"))
+    BETA_RETENTION_COUNT = int(os.getenv("BETA_RETENTION_COUNT", "3"))

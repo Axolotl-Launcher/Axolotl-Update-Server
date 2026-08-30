@@ -15,6 +15,7 @@ from ..auth import require_admin, require_upload_token
 from ..errors import ApiError
 from ..extensions import db
 from ..models import Artifact, AuditLog, ChannelPointer, Version, WebhookEvent, utcnow
+from ..services.retention import prune_dist
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 PLATFORMS = {"windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-x86_64", "darwin-aarch64"}
@@ -362,6 +363,13 @@ def release_webhook():
         pointer.current_version = pointer_candidate(channel); db.session.add(pointer)
         event.status, event.processed_at = "processed", utcnow()
         db.session.commit()
+        try:
+            prune_dist(
+                current_app.config.get("RELEASE_RETENTION_COUNT", 3),
+                current_app.config.get("BETA_RETENTION_COUNT", 3),
+            )
+        except OSError:
+            current_app.logger.exception("Artifact retention cleanup failed")
         return jsonify({"status": "published", "version": version})
     except ApiError as exc:
         db.session.rollback(); event = db.session.get(WebhookEvent, event_id) or event; event.status, event.error_message = "failed", exc.message; db.session.add(event); db.session.commit(); raise
