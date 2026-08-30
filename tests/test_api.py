@@ -80,6 +80,8 @@ def test_complete_downloads_are_separate_from_latest(client):
     downloads = client.get("/api/downloads/latest?channel=release")
     assert downloads.status_code == 200 and [x["kind"] for x in downloads.json["downloads"]] == ["installer"]
     assert downloads.json["downloads"][0]["label"] == "Windows x64 Modern Installer"
+    with_updater = client.get("/api/downloads/latest?channel=release&include_updater=true")
+    assert {x["kind"] for x in with_updater.json["downloads"]} == {"installer", "updater"}
 
 
 def test_beta_channel_includes_release_and_beta(client, app):
