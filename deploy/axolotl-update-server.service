@@ -9,7 +9,7 @@ EnvironmentFile=/www/server/Axolotl-Update-Server/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/www/server/Axolotl-Update-Server/.venv/bin/flask --app wsgi:app db upgrade
-ExecStart=/www/server/Axolotl-Update-Server/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8082 --access-logfile - --error-logfile - --capture-output wsgi:app
+ExecStart=/www/server/Axolotl-Update-Server/.venv/bin/gunicorn --workers 2 --worker-class sync --timeout 1800 --graceful-timeout 30 --bind 127.0.0.1:8082 --access-logfile - --error-logfile - --capture-output wsgi:app
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=120

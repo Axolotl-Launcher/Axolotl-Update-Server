@@ -82,7 +82,7 @@ def download_file(url: str, destination: Path, expected_size: int, expected_sha2
 
 
 def prepare_catalog(release: dict[str, Any], catalog: dict[str, Any], version: str, tag: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    if release.get("tag_name") != tag:
+    if release.get("draft") is not False or release.get("tag_name") != tag:
         raise ApiError("invalid_github_release", "GitHub Release must be public and match the webhook tag.")
     if catalog.get("version") != version or not isinstance(catalog.get("files"), list) or not isinstance(catalog.get("artifacts"), list):
         raise ApiError("invalid_catalog", "Catalog version, files, and artifacts are required.")

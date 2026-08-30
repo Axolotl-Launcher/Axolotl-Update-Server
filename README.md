@@ -45,7 +45,13 @@ Revoking a version removes it from `/latest` and download-directory latest selec
 Copy `Caddyfile.example` to the Caddy configuration. It routes `/dist/*` to `/www/wwwroot/update.axlmc.org/dist`, and `/latest` plus `/api/*` to Flask on `127.0.0.1:8082`; Caddy automatically manages HTTPS certificates. Set `DIST_ROOT=/www/wwwroot/update.axlmc.org/dist` so files are stored as `/dist/<version>/...`. Run Flask behind Gunicorn:
 
 ```bash
-gunicorn --workers 2 --bind 127.0.0.1:8082 wsgi:app
+gunicorn \
+  --workers 2 \
+  --worker-class sync \
+  --timeout 1800 \
+  --graceful-timeout 30 \
+  --bind 127.0.0.1:8082 \
+  wsgi:app
 ```
 
 Back up both the SQLite database (`instance/update-server.db` by default) and the complete `DIST_ROOT` tree. Never commit `.env`, database files, or artifacts. `MAX_UPLOAD_SIZE` limits manual request bodies and `WEBHOOK_MAX_AGE_SECONDS` limits replay windows. GitHub imports are bounded by `GITHUB_DOWNLOAD_CONNECT_TIMEOUT_SECONDS`, `GITHUB_DOWNLOAD_READ_TIMEOUT_SECONDS`, `GITHUB_DOWNLOAD_RETRIES`, and `GITHUB_DOWNLOAD_MAX_SIZE`.
