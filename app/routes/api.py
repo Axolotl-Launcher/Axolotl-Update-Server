@@ -38,6 +38,16 @@ def validate_filename(filename: str):
         raise ApiError("invalid_filename", "Filename must be a single safe path component.")
 
 
+def pointer_candidate(channel: str):
+    versions = Version.query.filter_by(status="published").all()
+    if channel == "release":
+        versions = [v for v in versions if v.channel == "release" and not SemVersion.parse(v.version).prerelease]
+    else:
+        versions = [v for v in versions if (v.channel == "release" and not SemVersion.parse(v.version).prerelease) or (v.channel == "beta" and SemVersion.parse(v.version).prerelease)]
+    versions = [v for v in versions if any(a.platform in PLATFORMS and a.signature for a in v.artifacts)]
+    return max(versions, key=lambda v: SemVersion.parse(v.version)).version if versions else None
+
+
 @api_bp.get("/health")
 def health():
     return jsonify({"status": "ok", "service": "axolotl-update-server"})
@@ -62,35 +72,47 @@ def upload_artifact(version, filename):
     require_upload_token()
     parse_version(version)
     validate_filename(filename)
-    if not request.content_length and not request.get_data(cache=True):
+    hasher = hashlib.sha256()
+    size = 0
+    path = Path(current_app.config["DIST_ROOT"]) / version / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+        temp_name = tmp.name
+        while chunk := request.stream.read(1024 * 1024):
+            size += len(chunk)
+            if size > current_app.config["MAX_CONTENT_LENGTH"]:
+                Path(temp_name).unlink(missing_ok=True)
+                raise ApiError("payload_too_large", "Artifact exceeds the configured upload limit.", 413)
+            hasher.update(chunk)
+            tmp.write(chunk)
+    if size == 0:
+        Path(temp_name).unlink(missing_ok=True)
         raise ApiError("empty_artifact", "Artifact body must not be empty.")
-    data = request.get_data(cache=True)
-    digest = hashlib.sha256(data).hexdigest()
-    size = len(data)
+    digest = hasher.hexdigest()
     expected_hash = request.headers.get("X-Axolotl-SHA256")
     expected_size = request.headers.get("X-Axolotl-Size")
     if expected_hash and not secrets.compare_digest(expected_hash.lower(), digest):
+        Path(temp_name).unlink(missing_ok=True)
         raise ApiError("hash_mismatch", "Uploaded content hash does not match.")
     if expected_size:
         try:
             size_matches = int(expected_size) == size
         except ValueError as exc:
+            Path(temp_name).unlink(missing_ok=True)
             raise ApiError("invalid_size", "X-Axolotl-Size must be an integer.") from exc
         if not size_matches:
+            Path(temp_name).unlink(missing_ok=True)
             raise ApiError("size_mismatch", "Uploaded content size does not match.")
     v = Version.query.filter_by(version=version).first()
     if not v:
         v = Version(version=version, channel="beta" if "-" in version else "release", status="uploading")
         db.session.add(v); db.session.flush()
-    path = Path(current_app.config["DIST_ROOT"]) / version / filename
-    path.parent.mkdir(parents=True, exist_ok=True)
     existing = Artifact.query.filter_by(relative_path=f"dist/{version}/{filename}").first()
     if existing:
+        Path(temp_name).unlink(missing_ok=True)
         if existing.sha256 == digest and existing.size == size:
             return jsonify({"artifact": artifact_json(existing), "idempotent": True})
         raise ApiError("artifact_exists", "An artifact with a different hash already exists.", 409)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
-        tmp.write(data); temp_name = tmp.name
     Path(temp_name).replace(path)
     artifact = Artifact(version_id=v.id, platform=request.headers.get("X-Axolotl-Platform", ""), architecture=request.headers.get("X-Axolotl-Architecture", ""), filename=filename, relative_path=f"dist/{version}/{filename}", size=size, sha256=digest, signature=request.headers.get("X-Axolotl-Signature"), content_type=request.headers.get("Content-Type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
     db.session.add(artifact); db.session.commit()
@@ -183,12 +205,15 @@ def release_webhook():
             temp_manifest = tmp.name
         Path(temp_manifest).replace(manifest_path)
         pointer = db.session.get(ChannelPointer, channel) or ChannelPointer(channel=channel)
-        pointer.current_version = version; db.session.add(pointer)
+        pointer.current_version = pointer_candidate(channel); db.session.add(pointer)
         event.status, event.processed_at = "processed", utcnow()
         db.session.commit()
         return jsonify({"status": "published", "version": version})
     except ApiError as exc:
         db.session.rollback(); event = db.session.get(WebhookEvent, event_id) or event; event.status, event.error_message = "failed", exc.message; db.session.add(event); db.session.commit(); raise
+    except (ValueError, OSError) as exc:
+        db.session.rollback(); event = db.session.get(WebhookEvent, event_id) or event; event.status, event.error_message = "failed", "Webhook validation or publication failed."; db.session.add(event); db.session.commit()
+        raise ApiError("webhook_failed", "Webhook validation or publication failed.") from exc
 
 
 def _admin_change(version, restore=False):
@@ -208,13 +233,8 @@ def _admin_change(version, restore=False):
         action = "revoke"
     pointer = db.session.get(ChannelPointer, v.channel)
     if restore or (pointer and pointer.current_version == version):
-        all_versions = Version.query.filter(Version.status == "published").all()
-        if v.channel == "release":
-            candidates = [x for x in all_versions if x.channel == "release" and not SemVersion.parse(x.version).prerelease]
-        else:
-            candidates = [x for x in all_versions if (x.channel == "release" and not SemVersion.parse(x.version).prerelease) or (x.channel == "beta" and SemVersion.parse(x.version).prerelease)]
         pointer = pointer or ChannelPointer(channel=v.channel)
-        pointer.current_version = max(candidates, key=lambda x: SemVersion.parse(x.version)).version if candidates else None
+        pointer.current_version = pointer_candidate(v.channel)
         db.session.add(pointer)
     db.session.add(AuditLog(operator=operator, action=action, channel=v.channel, version=version, reason=reason, request_id=request.environ.get("request_id"), ip_address=request.remote_addr))
     db.session.commit()

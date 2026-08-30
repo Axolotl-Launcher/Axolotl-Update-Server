@@ -54,5 +54,6 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     with app.app_context():
         from . import models  # noqa: F401
-        db.create_all()
+        if app.config.get("FLASK_ENV") != "production":
+            db.create_all()
     return app
