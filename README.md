@@ -58,28 +58,22 @@ To limit disk usage, a successful release webhook prunes published version direc
 
 ### systemd
 
-`deploy/axolotl-update-server.service` runs Gunicorn from the project's `.venv` and loads `/srv/axolotl-update-server/.env`. It assumes the project is deployed at `/srv/axolotl-update-server` and runs as the dedicated `axolotl-update` user.
+`deploy/axolotl-update-server.service` runs as root from `/www/server/Axolotl-Update-Server`, loads `/www/server/Axolotl-Update-Server/.env`, runs migrations with `.venv/bin/flask`, and starts `.venv/bin/gunicorn`.
 
-Create the service user and install the project before enabling the unit:
+Create the virtual environment and install dependencies:
 
 ```bash
-sudo useradd --system --home-dir /srv/axolotl-update-server --shell /usr/sbin/nologin axolotl-update
-sudo install -d -o axolotl-update -g axolotl-update /srv/axolotl-update-server
-sudo chown -R axolotl-update:axolotl-update /srv/axolotl-update-server
+cd /www/server/Axolotl-Update-Server
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
-Create the virtual environment and install dependencies as that user:
+Copy `.env.example` to `.env` and set unique production secrets:
 
 ```bash
-sudo -u axolotl-update python3 -m venv /srv/axolotl-update-server/.venv
-sudo -u axolotl-update /srv/axolotl-update-server/.venv/bin/pip install -r /srv/axolotl-update-server/requirements.txt
-```
-
-Copy `.env.example` to `.env`, set unique production secrets, and restrict it to the service account:
-
-```bash
-sudo -u axolotl-update cp /srv/axolotl-update-server/.env.example /srv/axolotl-update-server/.env
-sudo chmod 600 /srv/axolotl-update-server/.env
+cd /www/server/Axolotl-Update-Server
+cp .env.example .env
+chmod 600 .env
 ```
 
 The `.env` file is consumed by systemd's `EnvironmentFile`, so use plain `KEY=value` lines. Do not use `export`, shell substitutions, multiline values, or quotes that need shell interpretation. Use absolute production paths:
@@ -87,7 +81,7 @@ The `.env` file is consumed by systemd's `EnvironmentFile`, so use plain `KEY=va
 ```dotenv
 FLASK_ENV=production
 SECRET_KEY=<unique-secret>
-DATABASE_URL=sqlite:////srv/axolotl-update-server/instance/update-server.db
+DATABASE_URL=sqlite:////www/server/Axolotl-Update-Server/instance/update-server.db
 DIST_ROOT=/www/wwwroot/update.axlmc.org/dist
 PUBLIC_BASE_URL=https://update.axlmc.org
 UPDATE_SERVER_HOST=127.0.0.1
@@ -100,11 +94,11 @@ WEBHOOK_MAX_AGE_SECONDS=300
 RATE_LIMIT_PER_MINUTE=120
 ```
 
-Ensure the service user can write the database directory and `DIST_ROOT`:
+Ensure the database directory and `DIST_ROOT` exist:
 
 ```bash
-sudo install -d -o axolotl-update -g axolotl-update /srv/axolotl-update-server/instance
-sudo install -d -o axolotl-update -g axolotl-update /www/wwwroot/update.axlmc.org/dist
+mkdir -p /www/server/Axolotl-Update-Server/instance
+mkdir -p /www/wwwroot/update.axlmc.org/dist
 ```
 
 Install and start the service:
