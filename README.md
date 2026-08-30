@@ -52,6 +52,10 @@ Back up both the SQLite database (`instance/update-server.db` by default) and th
 
 The built-in rate limiter is process-local and intended as a baseline safeguard. With multiple Gunicorn workers, use a shared proxy/Redis limiter for consistent enforcement.
 
+### Artifact retention
+
+To limit disk usage, a successful release webhook prunes published version directories after the database transaction completes. By default, `RELEASE_RETENTION_COUNT=3` and `BETA_RETENTION_COUNT=3`; the retained set is the union of the newest three stable Release versions and newest three Beta prerelease versions. Database version and artifact metadata is preserved, while removed files are no longer eligible for `/latest` or `/api/downloads/*`. Configure the counts with environment variables when a different retention window is required. Draft/uploading versions and non-version directories are not removed.
+
 ### systemd
 
 `deploy/axolotl-update-server.service` runs Gunicorn from the project's `.venv` and loads `/srv/axolotl-update-server/.env`. It assumes the project is deployed at `/srv/axolotl-update-server` and runs as the dedicated `axolotl-update` user.
