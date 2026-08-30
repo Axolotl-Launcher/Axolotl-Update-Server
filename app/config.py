@@ -16,3 +16,4 @@ class Config:
     ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE", str(512 * 1024 * 1024)))
     WEBHOOK_MAX_AGE_SECONDS = int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300"))
+    RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))

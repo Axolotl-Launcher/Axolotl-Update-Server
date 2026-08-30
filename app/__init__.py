@@ -1,4 +1,7 @@
+from collections import defaultdict, deque
 from pathlib import Path
+from time import monotonic
+from typing import Deque
 
 from flask import Flask, request
 
@@ -15,6 +18,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             raise RuntimeError("Production requires non-empty SECRET_KEY, UPLOAD_TOKEN, WEBHOOK_SECRET, and ADMIN_TOKEN")
     Path(app.config["DIST_ROOT"]).mkdir(parents=True, exist_ok=True)
     db.init_app(app)
+    request_buckets: defaultdict[str, Deque[float]] = defaultdict(deque)
 
     from .errors import register_error_handlers
     register_error_handlers(app)
@@ -24,6 +28,15 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         import uuid
 
         from flask import g
+        if request.path.startswith("/api/"):
+            bucket = request_buckets[request.remote_addr or "unknown"]
+            now = monotonic()
+            while bucket and now - bucket[0] >= 60:
+                bucket.popleft()
+            if len(bucket) >= app.config.get("RATE_LIMIT_PER_MINUTE", 120):
+                from .errors import ApiError
+                raise ApiError("rate_limited", "Too many requests; retry later.", 429)
+            bucket.append(now)
         rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         g.request_id = rid
         request.environ["request_id"] = rid
