@@ -124,6 +124,9 @@ def upload_artifact(version, filename):
         if existing.sha256 == digest and existing.size == size:
             if not path.exists():
                 os.link(temp_name, path)
+            elif path.stat().st_size != size or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                Path(temp_name).unlink(missing_ok=True)
+                raise ApiError("artifact_corrupt", "The existing artifact failed integrity verification.", 409)
             Path(temp_name).unlink(missing_ok=True)
             return jsonify({"artifact": artifact_json(existing), "idempotent": True})
         Path(temp_name).unlink(missing_ok=True)
