@@ -43,6 +43,13 @@ def latest():
         candidates = Version.query.filter(
             Version.channel.in_(("release", "beta")), Version.status == "published"
         ).all()
+        invalid = [
+            v for v in candidates
+            if not ((v.channel == "release" and not SemVersion.parse(v.version).prerelease)
+                    or (v.channel == "beta" and SemVersion.parse(v.version).prerelease))
+        ]
+        for version in invalid:
+            current_app.logger.warning("Ignoring invalid channel/version combination: %s/%s", version.channel, version.version)
         candidates = [
             v for v in candidates
             if (v.channel == "release" and not SemVersion.parse(v.version).prerelease)
