@@ -16,6 +16,7 @@ from ..extensions import db
 from ..models import Artifact, AuditLog, ChannelPointer, Version, WebhookEvent, utcnow
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
+PLATFORMS = {"windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-x86_64", "darwin-aarch64"}
 SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 
@@ -29,7 +30,7 @@ def parse_version(value: str) -> SemVersion:
 
 
 def json_version(v: Version):
-    return {"version": v.version, "channel": v.channel, "status": v.status, "notes": v.notes or "", "release_tag": v.release_tag, "release_id": v.release_id, "published_at": v.published_at.isoformat() if v.published_at else None, "minimum_version": v.minimum_version, "artifacts": [{"platform": a.platform, "architecture": a.architecture, "filename": a.filename, "relative_path": a.relative_path, "size": a.size, "sha256": a.sha256, "signature": a.signature, "content_type": a.content_type} for a in v.artifacts]}
+    return {"version": v.version, "channel": v.channel, "status": v.status, "notes": v.notes or "", "release_tag": v.release_tag, "release_id": v.release_id, "published_at": v.published_at.isoformat() if v.published_at else None, "minimum_version": v.minimum_version, "force_update": bool(v.force_update), "artifacts": [{"platform": a.platform, "architecture": a.architecture, "filename": a.filename, "relative_path": a.relative_path, "size": a.size, "sha256": a.sha256, "signature": a.signature, "content_type": a.content_type} for a in v.artifacts]}
 
 
 def validate_filename(filename: str):
@@ -44,7 +45,7 @@ def health():
 
 @api_bp.get("/versions")
 def versions():
-    items = Version.query.order_by(Version.version.desc()).all()
+    items = sorted(Version.query.all(), key=lambda item: SemVersion.parse(item.version), reverse=True)
     return jsonify({"versions": [json_version(v) for v in items]})
 
 
@@ -123,12 +124,18 @@ def release_webhook():
         raise ApiError("invalid_webhook", "event_id is required.")
     phash = hashlib.sha256(raw).hexdigest()
     existing_event = db.session.get(WebhookEvent, event_id)
+    event = existing_event
     if existing_event:
+        if existing_event.payload_hash != phash:
+            raise ApiError("webhook_event_conflict", "event_id was already used with a different payload.", 409)
         if existing_event.status == "processed":
             return jsonify({"status": "processed", "idempotent": True})
-        raise ApiError("webhook_already_failed", existing_event.error_message or "Webhook was already processed.", 409)
-    event = WebhookEvent(event_id=event_id, payload_hash=phash)
-    db.session.add(event)
+        existing_event.status = "received"
+        existing_event.error_message = None
+        db.session.commit()
+    if event is None:
+        event = WebhookEvent(event_id=event_id, payload_hash=phash)
+        db.session.add(event)
     try:
         version = payload.get("version", ""); tag = payload.get("tag", ""); channel = payload.get("channel", "")
         parsed = parse_version(version)
@@ -136,17 +143,27 @@ def release_webhook():
             raise ApiError("invalid_webhook", "Version, tag, and channel are inconsistent.")
         if channel == "release" and parsed.prerelease:
             raise ApiError("prerelease_release", "Release channel cannot publish prerelease versions.")
+        if channel == "beta" and not parsed.prerelease:
+            raise ApiError("stable_beta", "Beta channel requires a prerelease version.")
         v = Version.query.filter_by(version=version).first() or Version(version=version, channel=channel)
         v.channel, v.notes, v.release_tag, v.release_id = channel, payload.get("notes", ""), tag, str(payload.get("release_id", ""))
+        v.force_update = bool(payload.get("force_update", False))
         v.published_at = datetime.fromisoformat(payload.get("published_at", utcnow().isoformat()).replace("Z", "+00:00"))
         artifacts = payload.get("artifacts", [])
+        seen_platforms = set()
         required = {a.get("platform") for a in artifacts}
         for a_data in artifacts:
+            if a_data.get("platform") not in PLATFORMS or a_data.get("platform") in seen_platforms:
+                raise ApiError("invalid_artifact_platform", "Artifact platform is invalid or duplicated.")
+            seen_platforms.add(a_data.get("platform"))
+            if not a_data.get("filename"):
+                raise ApiError("invalid_filename", "Artifact filename is required.")
+            validate_filename(a_data["filename"])
             a = Artifact.query.filter_by(relative_path=f"dist/{version}/{a_data.get('filename')}").first()
             path = Path(current_app.config["DIST_ROOT"]) / version / (a_data.get("filename") or "")
             actual_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
             actual_size = path.stat().st_size if path.is_file() else -1
-            if (not a or actual_hash != a.sha256 or actual_size != a.size or a.sha256 != a_data.get("sha256") or a.size != a_data.get("size") or not a_data.get("signature")):
+            if (not a or a.version_id != v.id or a.relative_path != f"dist/{version}/{a.filename}" or actual_hash != a.sha256 or actual_size != a.size or a.sha256 != a_data.get("sha256") or a.size != a_data.get("size") or not a_data.get("signature")):
                 raise ApiError("artifact_validation_failed", "Webhook artifact validation failed.")
             a.platform, a.architecture, a.signature = a_data.get("platform", a.platform), a_data.get("architecture", a.architecture), a_data.get("signature")
         if not artifacts or not required:
@@ -157,10 +174,14 @@ def release_webhook():
             "notes": v.notes or "",
             "pub_date": v.published_at.isoformat().replace("+00:00", "Z"),
             "published_at": v.published_at.isoformat().replace("+00:00", "Z"),
+            "force_update": bool(v.force_update),
             "platforms": {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in v.artifacts if a.signature},
         }
         manifest_path = Path(current_app.config["DIST_ROOT"]) / version / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(dir=manifest_path.parent, mode="w", encoding="utf-8", delete=False) as tmp:
+            json.dump(manifest, tmp, indent=2)
+            temp_manifest = tmp.name
+        Path(temp_manifest).replace(manifest_path)
         pointer = db.session.get(ChannelPointer, channel) or ChannelPointer(channel=channel)
         pointer.current_version = version; db.session.add(pointer)
         event.status, event.processed_at = "processed", utcnow()
@@ -186,13 +207,15 @@ def _admin_change(version, restore=False):
         v.status, v.revoked_at, v.revoke_reason = "revoked", utcnow(), reason
         action = "revoke"
     pointer = db.session.get(ChannelPointer, v.channel)
-    if restore:
+    if restore or (pointer and pointer.current_version == version):
+        all_versions = Version.query.filter(Version.status == "published").all()
+        if v.channel == "release":
+            candidates = [x for x in all_versions if x.channel == "release" and not SemVersion.parse(x.version).prerelease]
+        else:
+            candidates = [x for x in all_versions if (x.channel == "release" and not SemVersion.parse(x.version).prerelease) or (x.channel == "beta" and SemVersion.parse(x.version).prerelease)]
         pointer = pointer or ChannelPointer(channel=v.channel)
-        pointer.current_version = version
-        db.session.add(pointer)
-    elif pointer and pointer.current_version == version:
-        candidates = [x for x in Version.query.filter_by(channel=v.channel, status="published").all() if x.version != version]
         pointer.current_version = max(candidates, key=lambda x: SemVersion.parse(x.version)).version if candidates else None
+        db.session.add(pointer)
     db.session.add(AuditLog(operator=operator, action=action, channel=v.channel, version=version, reason=reason, request_id=request.environ.get("request_id"), ip_address=request.remote_addr))
     db.session.commit()
     return jsonify({"status": v.status, "version": version})

@@ -21,6 +21,7 @@ class Version(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     revoked_at = db.Column(db.DateTime(timezone=True))
     revoke_reason = db.Column(db.Text)
+    force_update = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     artifacts = db.relationship("Artifact", backref="version_ref", cascade="all, delete-orphan")
 
 

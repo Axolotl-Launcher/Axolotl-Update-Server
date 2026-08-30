@@ -33,6 +33,11 @@ def latest():
         candidates = Version.query.filter(
             Version.channel.in_(("release", "beta")), Version.status == "published"
         ).all()
+        candidates = [
+            v for v in candidates
+            if (v.channel == "release" and not SemVersion.parse(v.version).prerelease)
+            or (v.channel == "beta" and SemVersion.parse(v.version).prerelease)
+        ]
     if current:
         try: current_sv = SemVersion.parse(current); candidates = [v for v in candidates if SemVersion.parse(v.version) > current_sv]
         except ValueError as exc:
@@ -48,7 +53,7 @@ def latest():
     if platform and not artifacts: return Response(status=204)
     platforms = {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in artifacts if a.signature}
     if platform and platform not in platforms: return Response(status=204)
-    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": iso_utc(chosen.published_at), "published_at": iso_utc(chosen.published_at), "platforms": platforms}
+    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": iso_utc(chosen.published_at), "published_at": iso_utc(chosen.published_at), "force_update": bool(chosen.force_update), "platforms": platforms}
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     etag = hashlib.sha256(body.encode()).hexdigest()
     if request.if_none_match and request.if_none_match.contains(etag): return Response(status=304, headers={"ETag": etag})

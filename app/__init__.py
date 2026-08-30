@@ -6,7 +6,7 @@ from typing import Deque
 from flask import Flask, request
 
 from .config import Config
-from .extensions import db
+from .extensions import db, migrate
 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
@@ -18,6 +18,7 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             raise RuntimeError("Production requires non-empty SECRET_KEY, UPLOAD_TOKEN, WEBHOOK_SECRET, and ADMIN_TOKEN")
     Path(app.config["DIST_ROOT"]).mkdir(parents=True, exist_ok=True)
     db.init_app(app)
+    migrate.init_app(app, db)
     request_buckets: defaultdict[str, Deque[float]] = defaultdict(deque)
 
     from .errors import register_error_handlers

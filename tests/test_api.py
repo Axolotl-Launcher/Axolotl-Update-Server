@@ -33,6 +33,29 @@ def test_latest_and_idempotent_upload(client):
     assert latest.status_code == 200 and latest.json["version"] == "1.0.0"
 
 
+def test_force_update_propagates_and_changes_etag(client, app):
+    upload(client)
+    payload = {"event_id": "force-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "force_update": True, "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "filename": "app.tar.gz", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}]}
+    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
+    assert client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig}).status_code == 200
+    first = client.get("/latest?platform=linux-x86_64")
+    assert first.json["force_update"] is True
+    assert client.get("/api/versions/1.0.0").json["force_update"] is True
+    with app.app_context():
+        from app.extensions import db
+        from app.models import Version
+        Version.query.filter_by(version="1.0.0").update({"force_update": False}); db.session.commit()
+    second = client.get("/latest?platform=linux-x86_64")
+    assert first.headers["ETag"] != second.headers["ETag"]
+
+
+def test_beta_rejects_stable_version(client):
+    payload = {"event_id": "bad-beta", "tag": "v1.0.0", "version": "1.0.0", "channel": "beta", "artifacts": []}
+    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
+    response = client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig})
+    assert response.status_code == 400 and response.json["error"]["code"] == "stable_beta"
+
+
 def test_beta_channel_includes_release_and_beta(client, app):
     upload(client)
     payload = {
