@@ -20,7 +20,7 @@ def iso_utc(value):
 
 def artifact_available(version, platform):
     for artifact in version.artifacts:
-        if artifact.platform != platform or not artifact.signature:
+        if artifact.platform != platform or artifact.kind != "updater" or not artifact.signature:
             continue
         path = Path(current_app.config["DIST_ROOT"]) / version.version / artifact.filename
         if path.is_file() and path.stat().st_size == artifact.size:
@@ -72,7 +72,7 @@ def latest():
     chosen = max(candidates, key=lambda v: SemVersion.parse(v.version))
     artifacts = [a for a in chosen.artifacts if a.platform == platform] if platform else chosen.artifacts
     if platform and not artifacts: return Response(status=204)
-    platforms = {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in artifacts if a.signature}
+    platforms = {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in artifacts if a.kind == "updater" and a.signature}
     if platform and platform not in platforms: return Response(status=204)
     published_at = iso_utc(chosen.published_at or utcnow())
     payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": published_at, "published_at": published_at, "force_update": bool(chosen.force_update), "platforms": platforms}

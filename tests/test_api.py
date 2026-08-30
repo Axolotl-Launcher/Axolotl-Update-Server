@@ -5,11 +5,11 @@ import time
 from pathlib import Path
 
 
-def upload(client, body=b"payload", filename="app.tar.gz", platform="linux-x86_64"):
+def upload(client, body=b"payload", filename="app.tar.gz", platform="linux-x86_64", kind="updater", variant="", display_name=""):
     return client.put(
         f"/api/artifacts/1.0.0/{filename}",
         data=body,
-        headers={"X-Upload-Token": "upload", "X-Axolotl-Platform": platform, "X-Axolotl-Signature": "sig"},
+        headers={"X-Upload-Token": "upload", "X-Axolotl-Platform": platform, "X-Axolotl-Signature": "sig", "X-Axolotl-Kind": kind, "X-Axolotl-Variant": variant, "X-Axolotl-Display-Name": display_name},
     )
 
 
@@ -67,6 +67,19 @@ def test_webhook_failed_event_can_retry_but_payload_conflict_is_rejected(client)
     conflict_raw = json.dumps(conflict).encode(); conflict_sig = hmac.new(b"webhook", (ts + ".").encode() + conflict_raw, hashlib.sha256).hexdigest()
     response = client.post("/api/webhook/release", data=conflict_raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": conflict_sig})
     assert response.status_code == 409 and response.json["error"]["code"] == "webhook_event_conflict"
+
+
+def test_complete_downloads_are_separate_from_latest(client):
+    upload(client, filename="update.zip")
+    upload(client, body=b"installer", filename="Axolotl-modern.exe", platform="windows", kind="installer", variant="modern", display_name="Windows x64 Modern Installer")
+    payload = {"event_id": "downloads-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "architecture": "x86_64", "kind": "updater", "filename": "update.zip", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}, {"platform": "windows", "architecture": "x86_64", "kind": "installer", "variant": "modern", "filename": "Axolotl-modern.exe", "size": 9, "sha256": hashlib.sha256(b"installer").hexdigest(), "signature": None, "display_name": "Windows x64 Modern Installer"}]}
+    raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
+    assert client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig}).status_code == 200
+    latest = client.get("/latest?platform=linux-x86_64")
+    assert latest.status_code == 200 and latest.json["platforms"].keys() == {"linux-x86_64"}
+    downloads = client.get("/api/downloads/latest?channel=release")
+    assert downloads.status_code == 200 and [x["kind"] for x in downloads.json["downloads"]] == ["installer"]
+    assert downloads.json["downloads"][0]["label"] == "Windows x64 Modern Installer"
 
 
 def test_beta_channel_includes_release_and_beta(client, app):
