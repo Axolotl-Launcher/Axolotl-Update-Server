@@ -181,14 +181,32 @@ def eligible_versions(channel: str):
 def download_payload(v: Version, include_updater: bool = False):
     kind_order = {"installer": 0, "portable": 1, "updater": 2}
     platform_order = {"windows": 0, "macos": 1, "linux": 2}
-    artifacts = [a for a in v.artifacts if a.is_public and a.kind != "signature" and (include_updater or a.kind != "updater")]
+    artifacts = [
+        a for a in v.artifacts
+        if a.is_public
+        and a.kind != "signature"
+        and (include_updater or a.kind != "updater")
+        and a.relative_path == f"dist/{v.version}/{a.filename}"
+        and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
+        and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
+    ]
     artifacts.sort(key=lambda a: (platform_order.get(a.platform, 99), kind_order.get(a.kind, 99), a.sort_order, a.display_name or a.filename))
     return {"version": v.version, "channel": v.channel, "status": v.status, "published_at": v.published_at.isoformat().replace("+00:00", "Z") if v.published_at else None, "force_update": bool(v.force_update), "downloads": [download_json(a) for a in artifacts]}
 
 
 def select_download_version(channel: str, include_updater: bool = False):
     allowed = {"installer", "portable", "updater"} if include_updater else {"installer", "portable"}
-    candidates = [v for v in eligible_versions(channel) if v.published_at is not None and any(a.is_public and a.kind in allowed for a in v.artifacts)]
+    candidates = [
+        v for v in eligible_versions(channel)
+        if v.published_at is not None
+        and any(
+            a.is_public and a.kind in allowed
+            and a.relative_path == f"dist/{v.version}/{a.filename}"
+            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
+            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
+            for a in v.artifacts
+        )
+    ]
     return max(candidates, key=lambda v: SemVersion.parse(v.version)) if candidates else None
 
 
@@ -292,10 +310,12 @@ def release_webhook():
             artifact_variant = a_data.get("variant", "")
             if artifact_platform not in PLATFORMS | PACKAGE_PLATFORMS or artifact_arch not in ARCHITECTURES:
                 raise ApiError("invalid_artifact_platform", "Artifact platform or architecture is invalid.")
+            if artifact_kind == "updater" and artifact_platform not in PLATFORMS:
+                raise ApiError("invalid_updater_platform", "Updater artifacts require a launcher platform key.")
             if artifact_kind not in ARTIFACT_KINDS:
                 raise ApiError("invalid_artifact_kind", "Artifact kind is not supported.")
             identity = (artifact_kind, artifact_platform, artifact_arch, artifact_variant, a_data.get("filename") if artifact_kind == "signature" else "")
-            if identity in seen_variants:
+            if identity in seen_variants or (artifact_kind == "updater" and artifact_platform in seen_platforms):
                 raise ApiError("duplicate_artifact", "Artifact kind, platform, architecture, and variant must be unique.")
             seen_variants.add(identity)
             seen_platforms.add(artifact_platform)
@@ -312,7 +332,10 @@ def release_webhook():
             a.signature = a_data.get("signature")
             a.display_name = a_data.get("display_name") or a.display_name or a.filename
             a.sort_order = int(a_data.get("sort_order", a.sort_order or 0))
-            a.is_public = bool(a_data.get("is_public", a.is_public))
+            is_public = a_data.get("is_public", a.is_public)
+            if not isinstance(is_public, bool):
+                raise ApiError("invalid_artifact_metadata", "is_public must be a boolean.")
+            a.is_public = is_public
         if not artifacts or not required:
             raise ApiError("missing_artifacts", "At least one complete artifact is required.")
         v.status = "published"; db.session.add(v)
