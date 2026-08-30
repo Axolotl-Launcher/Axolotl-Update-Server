@@ -148,6 +148,12 @@ def upload_artifact(version, filename):
             return jsonify({"artifact": artifact_json(existing), "idempotent": True})
         Path(temp_name).unlink(missing_ok=True)
         raise ApiError("artifact_exists", "An artifact with a different hash already exists.", 409)
+    duplicate_metadata = Artifact.query.filter_by(
+        version_id=v.id, kind=kind, platform=platform, architecture=architecture, variant=variant
+    ).first()
+    if duplicate_metadata and kind != "signature":
+        Path(temp_name).unlink(missing_ok=True)
+        raise ApiError("duplicate_artifact", "Artifact metadata already exists for this version.", 409)
     if v.status == "published":
         Path(temp_name).unlink(missing_ok=True)
         raise ApiError("version_immutable", "Published versions cannot receive new artifacts.", 409)

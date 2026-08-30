@@ -72,6 +72,7 @@ def test_webhook_failed_event_can_retry_but_payload_conflict_is_rejected(client)
 def test_complete_downloads_are_separate_from_latest(client):
     upload(client, filename="update.zip")
     upload(client, body=b"installer", filename="Axolotl-modern.exe", platform="windows", kind="installer", variant="modern", display_name="Windows x64 Modern Installer")
+    assert upload(client, body=b"other", filename="Axolotl-modern-duplicate.exe", platform="windows", kind="installer", variant="modern").status_code == 409
     payload = {"event_id": "downloads-1", "tag": "v1.0.0", "version": "1.0.0", "channel": "release", "published_at": "2026-08-30T00:00:00Z", "artifacts": [{"platform": "linux-x86_64", "architecture": "x86_64", "kind": "updater", "filename": "update.zip", "size": 7, "sha256": hashlib.sha256(b"payload").hexdigest(), "signature": "sig"}, {"platform": "windows", "architecture": "x86_64", "kind": "installer", "variant": "modern", "filename": "Axolotl-modern.exe", "size": 9, "sha256": hashlib.sha256(b"installer").hexdigest(), "signature": None, "display_name": "Windows x64 Modern Installer"}]}
     raw = json.dumps(payload).encode(); ts = str(int(time.time())); sig = hmac.new(b"webhook", (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
     assert client.post("/api/webhook/release", data=raw, content_type="application/json", headers={"X-Webhook-Timestamp": ts, "X-Webhook-Signature": sig}).status_code == 200
