@@ -35,6 +35,12 @@ def validate_asset_url(url: str, tag: str, filename: str) -> None:
         raise ApiError("invalid_github_asset_url", "GitHub asset URL contains unsupported components.")
 
 
+def github_asset_url(tag: str, filename: str) -> str:
+    return "https://github.com" + "/" + "/".join(
+        (GITHUB_OWNER, GITHUB_REPOSITORY, "releases", "download", quote(tag, safe=""), quote(filename, safe=""))
+    )
+
+
 def _open_stream(url: str):
     opener = current_app.config.get("GITHUB_DOWNLOAD_OPEN")
     timeout = current_app.config["GITHUB_DOWNLOAD_CONNECT_TIMEOUT_SECONDS"]

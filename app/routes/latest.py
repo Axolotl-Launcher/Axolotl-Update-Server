@@ -3,11 +3,13 @@ import json
 from datetime import timezone
 from pathlib import Path
 
-from flask import Blueprint, Response, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, redirect, request
 from semver import Version as SemVersion
 
 from ..errors import ApiError
-from ..models import Version, utcnow
+from ..models import Artifact, Version, utcnow
+from ..services.github_release import github_asset_url
+from ..services.retention import retained_versions
 
 latest_bp = Blueprint("latest", __name__)
 
@@ -85,8 +87,22 @@ def latest():
 @latest_bp.get("/dist/<version>/<path:filename>")
 def dist_file(version, filename):
     # Development fallback; production Caddy should serve /dist directly.
-    root = Path(current_app.config["DIST_ROOT"]).resolve(); target = (root / version / filename).resolve()
-    if root not in target.parents or not target.is_file(): raise ApiError("artifact_not_found", "The requested artifact does not exist.", 404)
+    root = Path(current_app.config["DIST_ROOT"]).resolve()
+    target = (root / version / filename).resolve()
+    if root not in target.parents:
+        raise ApiError("artifact_not_found", "The requested artifact does not exist.", 404)
+    if not target.is_file():
+        artifact = Artifact.query.join(Version).filter(
+            Artifact.relative_path == f"dist/{version}/{filename}", Version.status == "published"
+        ).first()
+        if (
+            artifact
+            and artifact.version_ref.version not in retained_versions()
+            and artifact.version_ref.release_tag == f"v{version}"
+            and artifact.version_ref.release_id
+        ):
+            return redirect(github_asset_url(artifact.version_ref.release_tag, artifact.filename), code=302)
+        raise ApiError("artifact_not_found", "The requested artifact does not exist.", 404)
     from flask import send_from_directory
     response = send_from_directory(root / version, filename, conditional=True)
     response.headers["Cache-Control"] = "public, max-age=31536000, immutable"; return response

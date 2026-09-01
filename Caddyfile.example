@@ -1,4 +1,5 @@
 http://update.axlmc.org https://update.axlmc.org {
+    root * /www/wwwroot/update.axlmc.org
     encode gzip
     header {
         X-Content-Type-Options "nosniff"
@@ -13,9 +14,16 @@ http://update.axlmc.org https://update.axlmc.org {
         reverse_proxy 127.0.0.1:8082
         header Cache-Control "no-cache, max-age=0, must-revalidate"
     }
-    handle_path /dist/* {
-        root * /www/wwwroot/update.axlmc.org/dist
+    @stored_dist_file {
+        path /dist/*
+        file {path}
+    }
+    handle @stored_dist_file {
         file_server
         header Cache-Control "public, max-age=31536000, immutable"
+    }
+    # Missing, pruned dist files are handled by Flask and may redirect to GitHub.
+    handle /dist/* {
+        reverse_proxy 127.0.0.1:8082
     }
 }

@@ -38,6 +38,8 @@ Webhook retries with the same event ID and payload hash are safe; a failed event
 
 The automatic updater and the complete package catalog are separate: `/latest` contains only signed Tauri updater artifacts, while `/api/downloads/*` is for website/manual downloads. GitHub Release and CNB Release remain publishing records and manual-download sources; Launcher automatic updates use only this Update Server.
 
+The newest three published Release versions and three published Beta versions remain in `DIST_ROOT`. When a request targets an artifact from a GitHub-imported version pruned by this retention policy, `/dist/<version>/<filename>` returns `302 Found` to its fixed GitHub Release asset URL. Existing local files continue to be served directly by Caddy; missing unknown, current, or manually uploaded artifacts return `404`.
+
 Revoking a version removes it from `/latest` and download-directory latest selection while retaining its immutable `/dist/<version>/...` URLs for in-progress or previously published links. A separate `blocked` artifact state is intentionally not enabled yet; urgent takedowns should be handled at the Caddy/object-storage layer until that policy is introduced with an audited migration.
 
 ## Caddy and production

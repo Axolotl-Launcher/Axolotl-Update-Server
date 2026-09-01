@@ -17,6 +17,12 @@ def _retained_versions(channel: str, count: int) -> set[str]:
     return {version.version for version in versions[:count]}
 
 
+def retained_versions() -> set[str]:
+    return _retained_versions("release", current_app.config.get("RELEASE_RETENTION_COUNT", 3)) | _retained_versions(
+        "beta", current_app.config.get("BETA_RETENTION_COUNT", 3)
+    )
+
+
 def prune_dist(retention_release: int = 3, retention_beta: int = 3) -> list[str]:
     """Remove old published version directories while retaining DB metadata.
 
