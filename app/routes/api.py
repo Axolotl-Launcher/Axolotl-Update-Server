@@ -559,12 +559,26 @@ def usage_stats():
     events = UsageEvent.query.filter(UsageEvent.occurred_at >= start, UsageEvent.occurred_at < end).all()
     api_events = [event for event in events if event.event_type == "api"]
     downloads = [event for event in events if event.event_type == "download"]
-    by_channel: dict[str, int] = {}
+    api_groups: dict[tuple[str, str], int] = {}
     for event in api_events:
-        by_channel[event.channel] = by_channel.get(event.channel, 0) + 1
+        api_key = (str(event.version or "unknown"), str(event.channel or "unknown"))
+        api_groups[api_key] = api_groups.get(api_key, 0) + 1
+    download_groups: dict[tuple[str, str, str], dict[str, int]] = {}
+    for event in downloads:
+        download_key = (str(event.version or "unknown"), str(event.platform or "unknown"), str(event.channel or "unknown"))
+        group = download_groups.setdefault(download_key, {"count": 0, "bytes": 0})
+        group["count"] += 1
+        group["bytes"] += event.bytes_sent or 0
     return jsonify({
         "start": start.isoformat().replace("+00:00", "Z"),
         "end": end.isoformat().replace("+00:00", "Z"),
-        "api_calls": {"total": len(api_events), "by_channel": by_channel},
-        "downloads": {"count": len(downloads), "bytes": sum(event.bytes_sent or 0 for event in downloads)},
+        "api_calls": {
+            "total": len(api_events),
+            "groups": [{"version": version, "channel": channel, "count": count} for (version, channel), count in sorted(api_groups.items())],
+        },
+        "downloads": {
+            "total_count": len(downloads),
+            "total_bytes": sum(event.bytes_sent or 0 for event in downloads),
+            "groups": [{"version": version, "platform": platform, "channel": channel, **values} for (version, platform, channel), values in sorted(download_groups.items())],
+        },
     })

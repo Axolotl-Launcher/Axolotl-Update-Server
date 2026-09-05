@@ -44,18 +44,39 @@ def create_app(config_object: type[Config] = Config) -> Flask:
 
     @app.after_request
     def record_usage(response):
-        from .models import UsageEvent, utcnow
+        import re
+
+        from .models import Artifact, UsageEvent, utcnow
 
         # Statistics are intentionally not self-referential. Caddy-served files
         # bypass Flask; requests reaching this fallback are still recorded.
         if request.path != "/api/admin/stats":
-            event_type = "download" if request.path.startswith("/dist/") else ("api" if request.path.startswith("/api/") else None)
+            event_type = "download" if request.path.startswith("/dist/") else ("api" if request.path.startswith("/api/") or request.path == "/latest" else None)
             if event_type:
-                channel = request.headers.get("X-Axolotl-Channel") or request.args.get("channel") or "unknown"
-                if channel not in ("release", "beta"):
+                channel = request.headers.get("X-Axolotl-Channel") or request.args.get("channel")
+                version = request.headers.get("X-Axolotl-Version") or request.args.get("current_version")
+                platform = request.headers.get("X-Axolotl-Platform") or request.args.get("platform")
+                if event_type == "download":
+                    match = re.match(r"^/dist/([^/]+)/", request.path)
+                    version = match.group(1) if match else None
+                    artifact = Artifact.query.filter_by(relative_path=f"dist/{version}/{request.path.rsplit('/', 1)[-1]}").first() if version else None
+                    if artifact:
+                        platform = platform or artifact.platform or None
+                        if not platform and artifact.kind == "signature":
+                            parent = Artifact.query.filter_by(version_id=artifact.version_id, signature_filename=artifact.filename).first()
+                            platform = parent.platform if parent else None
+                        channel = channel or artifact.version_ref.channel
+                elif not version:
+                    match = re.match(r"^/api/(?:versions|downloads)/([^/]+)$", request.path)
+                    version = match.group(1) if match else None
+                if request.is_json and (not version or not channel):
+                    body = request.get_json(silent=True) or {}
+                    version = version or body.get("version")
+                    channel = channel or body.get("channel")
+                if not channel or channel not in ("release", "beta"):
                     channel = "unknown"
                 try:
-                    db.session.add(UsageEvent(path=request.path, channel=channel, event_type=event_type, status_code=response.status_code, bytes_sent=response.content_length or 0, occurred_at=utcnow()))
+                    db.session.add(UsageEvent(path=request.path, version=version, platform=platform, channel=channel, event_type=event_type, status_code=response.status_code, bytes_sent=response.content_length or 0, occurred_at=utcnow()))
                     db.session.commit()
                 except Exception:
                     db.session.rollback()

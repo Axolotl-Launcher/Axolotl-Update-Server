@@ -79,6 +79,8 @@ class UsageEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     occurred_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False, index=True)
     path = db.Column(db.String(512), nullable=False)
+    version = db.Column(db.String(64), index=True)
+    platform = db.Column(db.String(64), index=True)
     channel = db.Column(db.String(16), nullable=False, default="unknown", index=True)
     event_type = db.Column(db.String(16), nullable=False, default="api", index=True)
     status_code = db.Column(db.Integer, nullable=False, default=200)
