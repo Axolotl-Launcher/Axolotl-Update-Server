@@ -18,6 +18,8 @@ The Windows equivalent is `.venv\\Scripts\\python -m pip install -r requirements
 
 ## API
 
+Complete endpoint documentation is available in [docs/API.md](docs/API.md).
+
 * `GET /api/health`, `GET /api/versions`, and `GET /api/versions/<version>` expose service/version data.
 * `GET /api/admin/stats?start=<ISO-8601>&end=<ISO-8601>` (admin token required) reports API calls grouped by client/request `version` and `channel`, plus downloads grouped by artifact `version`, `platform`, and `channel`, with count and bytes for a range of at most 30 days. Calls to `/latest` use `X-Axolotl-Version` as the client version; versioned API paths use their path version. The default range is the previous 24 hours. Requests served entirely by Caddy's static `/dist` handler do not pass through Flask; aggregate Caddy access logs separately for production-wide static-download metrics. Flask's `/dist` fallback requests are included automatically.
 * Upload with `PUT /api/artifacts/<version>/<filename>` and `X-Upload-Token`. The body is hashed server-side and stored below `DIST_ROOT/<version>/` (with the default `DIST_ROOT=./dist`, this is `./dist/<version>/`).
