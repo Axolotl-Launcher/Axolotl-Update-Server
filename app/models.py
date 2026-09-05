@@ -73,3 +73,13 @@ class AuditLog(db.Model):
     request_id = db.Column(db.String(64))
     ip_address = db.Column(db.String(64))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class UsageEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    occurred_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    path = db.Column(db.String(512), nullable=False)
+    channel = db.Column(db.String(16), nullable=False, default="unknown", index=True)
+    event_type = db.Column(db.String(16), nullable=False, default="api", index=True)
+    status_code = db.Column(db.Integer, nullable=False, default=200)
+    bytes_sent = db.Column(db.BigInteger, nullable=False, default=0)

@@ -43,6 +43,26 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         request.environ["request_id"] = rid
 
     @app.after_request
+    def record_usage(response):
+        from .models import UsageEvent, utcnow
+
+        # Statistics are intentionally not self-referential. Caddy-served files
+        # bypass Flask; requests reaching this fallback are still recorded.
+        if request.path != "/api/admin/stats":
+            event_type = "download" if request.path.startswith("/dist/") else ("api" if request.path.startswith("/api/") else None)
+            if event_type:
+                channel = request.headers.get("X-Axolotl-Channel") or request.args.get("channel") or "unknown"
+                if channel not in ("release", "beta"):
+                    channel = "unknown"
+                try:
+                    db.session.add(UsageEvent(path=request.path, channel=channel, event_type=event_type, status_code=response.status_code, bytes_sent=response.content_length or 0, occurred_at=utcnow()))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    app.logger.exception("Failed to record usage event")
+        return response
+
+    @app.after_request
     def add_request_id(response):
         from flask import g
         response.headers["X-Request-ID"] = g.request_id

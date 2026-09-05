@@ -5,7 +5,7 @@ import os
 import re
 import secrets
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Blueprint, Response, current_app, jsonify, request
@@ -14,7 +14,7 @@ from semver import Version as SemVersion
 from ..auth import require_admin, require_upload_token
 from ..errors import ApiError
 from ..extensions import db
-from ..models import Artifact, AuditLog, ChannelPointer, Version, WebhookEvent, utcnow
+from ..models import Artifact, AuditLog, ChannelPointer, UsageEvent, Version, WebhookEvent, utcnow
 from ..services.github_release import download_file, prepare_catalog
 from ..services.retention import prune_dist
 
@@ -535,3 +535,36 @@ def restore(version): return _admin_change(version, True)
 def audit_logs():
     require_admin()
     return jsonify({"logs": [{"operator": x.operator, "action": x.action, "channel": x.channel, "version": x.version, "reason": x.reason, "request_id": x.request_id, "ip_address": x.ip_address, "created_at": x.created_at.isoformat()} for x in AuditLog.query.order_by(AuditLog.created_at.desc()).all()]})
+
+
+def _stats_datetime(value: str, default: datetime) -> datetime:
+    if not value:
+        return default
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ApiError("invalid_stats_range", "start and end must be ISO-8601 timestamps.") from exc
+    return (parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+@api_bp.get("/admin/stats")
+def usage_stats():
+    require_admin()
+    end = _stats_datetime(request.args.get("end", ""), utcnow())
+    start = _stats_datetime(request.args.get("start", ""), end - timedelta(days=1))
+    if end <= start:
+        raise ApiError("invalid_stats_range", "end must be after start.")
+    if end - start > timedelta(days=30):
+        raise ApiError("invalid_stats_range", "The maximum statistics range is 30 days.")
+    events = UsageEvent.query.filter(UsageEvent.occurred_at >= start, UsageEvent.occurred_at < end).all()
+    api_events = [event for event in events if event.event_type == "api"]
+    downloads = [event for event in events if event.event_type == "download"]
+    by_channel: dict[str, int] = {}
+    for event in api_events:
+        by_channel[event.channel] = by_channel.get(event.channel, 0) + 1
+    return jsonify({
+        "start": start.isoformat().replace("+00:00", "Z"),
+        "end": end.isoformat().replace("+00:00", "Z"),
+        "api_calls": {"total": len(api_events), "by_channel": by_channel},
+        "downloads": {"count": len(downloads), "bytes": sum(event.bytes_sent or 0 for event in downloads)},
+    })
