@@ -11,7 +11,7 @@ from flask import current_app
 from ..errors import ApiError
 
 CHUNK_SIZE = 1024 * 1024
-GITHUB_OWNER = "Mystic-Stars"
+GITHUB_OWNER = "Axolotl-Launcher"
 GITHUB_REPOSITORY = "Axolotl"
 
 

@@ -43,7 +43,7 @@ def test_pruned_github_artifact_redirects_to_github(client, app):
 
     assert response.status_code == 302
     assert response.headers["Location"] == (
-        "https://github.com/Mystic-Stars/Axolotl/releases/download/v1.0.1/setup.exe"
+        "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.0.1/setup.exe"
     )
 
 

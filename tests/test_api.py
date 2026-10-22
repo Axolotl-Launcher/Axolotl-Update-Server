@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 
 def signed_post(client, payload):
     raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -19,14 +21,14 @@ def payload_for(files=None, *, version="1.9.4", channel="release", force_update=
     assets, catalog_files = [], []
     for filename, body in files.items():
         digest = hashlib.sha256(body).hexdigest()
-        url = f"https://github.com/Mystic-Stars/Axolotl/releases/download/{tag}/{filename}"
+        url = f"https://github.com/Axolotl-Launcher/Axolotl/releases/download/{tag}/{filename}"
         assets.append({"name": filename, "size": len(body), "digest": f"sha256:{digest}", "browser_download_url": url})
         catalog_files.append({"filename": filename, "size": len(body), "sha256": digest, "downloadUrl": url})
     return {"event_id": f"github-{version}-1", "tag": tag, "version": version, "channel": channel, "force_update": force_update, "release": {"id": 123, "tag_name": tag, "body": "Release notes", "published_at": "2026-08-29T15:19:00Z", "draft": False, "assets": assets}, "catalog": {"version": version, "files": catalog_files, "artifacts": [{"filename": "update.tar.gz", "platform": "linux-x86_64", "architecture": "x86_64", "kind": "updater", "signatureFilename": "update.tar.gz.sig"}, {"filename": "installer.exe", "platform": "windows", "architecture": "x86_64", "kind": "installer", "variant": "modern"}]}}
 
 
 def configure_downloads(app, bodies, version="1.9.4"):
-    urls = {f"https://github.com/Mystic-Stars/Axolotl/releases/download/v{version}/{filename}": body for filename, body in bodies.items()}
+    urls = {f"https://github.com/Axolotl-Launcher/Axolotl/releases/download/v{version}/{filename}": body for filename, body in bodies.items()}
     app.config["GITHUB_DOWNLOAD_OPEN"] = lambda url, _timeout: io.BytesIO(urls[url])
 
 
@@ -54,6 +56,47 @@ def test_catalog_and_release_validation(client, app):
     assert signed_post(client, bad).json["error"]["code"] == "github_asset_metadata_mismatch"
     bad = payload_for(bodies); bad["event_id"] = "digest"; bad["release"]["assets"][0].pop("digest")
     assert signed_post(client, bad).json["error"]["code"] == "invalid_github_digest"
+
+
+def test_beta_import_from_current_github_repository(client, app):
+    version = "1.10.0-beta.5"
+    bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"tauri-signature\n", "installer.exe": b"installer"}
+    configure_downloads(app, bodies, version=version)
+    payload = payload_for(bodies, version=version, channel="beta")
+
+    response = signed_post(client, payload)
+
+    assert response.status_code == 200
+    assert response.json["status"] == "published"
+    latest = client.get("/latest?channel=beta&platform=linux-x86_64").json
+    assert latest["version"] == version
+    assert latest["platforms"]["linux-x86_64"]["signature"] == "tauri-signature"
+    assert Path(app.config["DIST_ROOT"], version, "update.tar.gz").read_bytes() == b"update"
+    assert signed_post(client, payload).json["idempotent"] is True
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/Mystic-Stars/Axolotl/releases/download/v1.9.4/update.tar.gz",
+    "https://github.com/Axolotl-Launcher/Other/releases/download/v1.9.4/update.tar.gz",
+    "http://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz",
+    "https://example.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz",
+    "https://github.com/Axolotl-Launcher/Axolotl/releases/download/untagged-example/update.tar.gz",
+    "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.5/update.tar.gz",
+    "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/other.tar.gz",
+    "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz?download=1",
+    "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz#fragment",
+    "https://user:password@github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz",
+    "https://github.com:443/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz",
+])
+def test_github_repository_change_preserves_url_restrictions(client, url):
+    payload = payload_for()
+    payload["release"]["assets"][0]["browser_download_url"] = url
+    payload["catalog"]["files"][0]["downloadUrl"] = url
+
+    response = signed_post(client, payload)
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_github_asset_url"
 
 
 def test_updater_requires_signature(client, app):

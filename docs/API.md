@@ -97,7 +97,7 @@ When the artifact belongs to a GitHub-imported published version that has been r
 
 ```http
 302 Found
-Location: https://github.com/Mystic-Stars/Axolotl/releases/download/v1.8.0/setup.exe
+Location: https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.8.0/setup.exe
 ```
 
 Unknown files, missing files from retained versions, revoked versions, and manual uploads without GitHub import metadata return `404`.
@@ -261,7 +261,7 @@ Payload shape:
         "name": "update.tar.gz",
         "size": 134244283,
         "digest": "sha256:d6fdd896...",
-        "browser_download_url": "https://github.com/Mystic-Stars/Axolotl/releases/download/v1.9.4/update.tar.gz"
+        "browser_download_url": "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz"
       }
     ]
   },
@@ -272,7 +272,7 @@ Payload shape:
         "filename": "update.tar.gz",
         "size": 134244283,
         "sha256": "d6fdd896...",
-        "downloadUrl": "https://github.com/Mystic-Stars/Axolotl/releases/download/v1.9.4/update.tar.gz"
+        "downloadUrl": "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.9.4/update.tar.gz"
       }
     ],
     "artifacts": [
@@ -295,7 +295,7 @@ Validation rules:
 - `release.id` and `release.published_at` are required; GitHub `published_at` is retained.
 - `release` channel requires stable SemVer; `beta` channel requires a prerelease.
 - Every `catalog.files` entry must match one unique GitHub asset by filename, size, SHA-256 digest, and exact download URL.
-- Only HTTPS URLs for `github.com/Mystic-Stars/Axolotl/releases/download/<tag>/<filename>` are accepted.
+- Only HTTPS URLs for `github.com/Axolotl-Launcher/Axolotl/releases/download/<tag>/<filename>` are accepted.
 - The server streams every physical file, including `.sig`, with size limits, timeout, retry, hash verification, fsync, and atomic rename.
 - `catalog.artifacts` contains main `updater`, `installer`, and `portable` entries only. Signature-only physical files are stored separately as private `kind=signature` rows.
 - Every updater artifact must reference a `.sig` file through `signatureFilename`. Its trimmed UTF-8 contents become `Artifact.signature`; the `.sig` SHA-256 is not used as the Tauri signature.
