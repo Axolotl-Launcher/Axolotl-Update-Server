@@ -15,6 +15,7 @@ from ..auth import require_admin, require_upload_token
 from ..errors import ApiError
 from ..extensions import db
 from ..models import Artifact, AuditLog, ChannelPointer, UsageEvent, Version, WebhookEvent, utcnow
+from ..services.force_update import set_force_update
 from ..services.github_release import download_file, prepare_catalog
 from ..services.retention import prune_dist
 
@@ -529,6 +530,24 @@ def revoke(version): return _admin_change(version)
 
 @api_bp.post("/admin/versions/<version>/restore")
 def restore(version): return _admin_change(version, True)
+
+
+@api_bp.patch("/admin/versions/<version>/force-update")
+def change_force_update(version):
+    require_admin()
+    parse_version(version)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("force_update"), bool):
+        raise ApiError("invalid_force_update", "force_update must be a JSON boolean.")
+    operator, reason = body.get("operator", "admin"), body.get("reason", "")
+    if not isinstance(operator, str) or not operator.strip() or len(operator) > 128 or not isinstance(reason, str):
+        raise ApiError("invalid_admin_metadata", "operator and reason must be strings; operator must contain 1 to 128 characters.")
+    response = jsonify(set_force_update(
+        version, body["force_update"], operator, reason,
+        request.environ.get("request_id"), request.remote_addr,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @api_bp.get("/admin/audit-logs")

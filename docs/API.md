@@ -325,6 +325,49 @@ The same event ID with a different payload returns `409 webhook_event_conflict`.
 
 All endpoints in this section require `Authorization: Bearer <ADMIN_TOKEN>`.
 
+### `PATCH /api/admin/versions/<version>/force-update`
+
+Enables or disables `force_update` on an existing published or revoked version.
+The JSON boolean is required; strings such as `"true"` and numbers are rejected.
+`operator` defaults to `admin` and `reason` defaults to an empty string.
+
+```bash
+curl -X PATCH 'https://update.axlmc.org/api/admin/versions/1.9.4/force-update' \
+  -H 'Authorization: Bearer <ADMIN_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  -d '{"force_update":true,"operator":"release-admin","reason":"Urgent security update"}'
+```
+
+```json
+{
+  "version": "1.9.4",
+  "status": "published",
+  "force_update": true,
+  "idempotent": false
+}
+```
+
+Send `false` to disable the flag. Repeating the current value returns
+`idempotent: true` and does not create another audit record. Changes update the
+database and local manifest and record `force_update_enabled` or
+`force_update_disabled` in the audit log. `/latest`, version and download APIs
+reflect the flag; ETags on `/latest` and the download APIs change accordingly.
+Publication time, version status, artifacts and channel pointers are preserved.
+Updating a revoked version does not restore it. Clients still select versions
+using the normal channel and SemVer rules; the flag tells Launcher to bypass
+its Release waiting period.
+
+Errors: `400 invalid_force_update` for missing/non-boolean values,
+`400 invalid_admin_metadata` for invalid operator/reason, `401` for invalid
+admin credentials, `404 version_not_found` for unknown versions,
+`409 invalid_version_state` for unfinished versions, `409 manifest_unavailable`
+for a missing/pruned local manifest, `409 invalid_manifest` for a mismatched
+manifest, and `500 force_update_failed` for file/database update failures.
+Handled update failures roll back the database and restore the previous manifest.
+Cached static `/dist/.../manifest.json` copies may remain stale due to immutable
+caching; use the dynamic `/latest` endpoint for current update policy.
+This endpoint requires no new database migration.
+
 ### `POST /api/admin/versions/<version>/revoke`
 
 Marks a published version as revoked and removes it from update selection.
