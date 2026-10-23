@@ -55,6 +55,7 @@ class ChannelPointer(db.Model):
 
 class WebhookEvent(db.Model):
     event_id = db.Column(db.String(255), primary_key=True)
+    version = db.Column(db.String(64), index=True)
     event_type = db.Column(db.String(64), nullable=False, default="release")
     payload_hash = db.Column(db.String(64), nullable=False)
     received_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)

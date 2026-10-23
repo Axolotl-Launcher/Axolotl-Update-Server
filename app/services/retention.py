@@ -4,7 +4,9 @@ from pathlib import Path
 from flask import current_app
 from semver import Version as SemVersion
 
+from ..errors import ApiError
 from ..models import Version
+from .version_lock import version_lock
 
 
 def _retained_versions(channel: str, count: int) -> set[str]:
@@ -44,6 +46,12 @@ def prune_dist(retention_release: int = 3, retention_beta: int = 3) -> list[str]
             target = version_dir.resolve()
             if root not in target.parents:
                 continue
-            shutil.rmtree(target)
-            removed.append(record.version)
+            try:
+                with version_lock(record.version):
+                    if target.is_dir():
+                        shutil.rmtree(target)
+                        removed.append(record.version)
+            except ApiError as exc:
+                if exc.code != "version_busy":
+                    raise
     return removed

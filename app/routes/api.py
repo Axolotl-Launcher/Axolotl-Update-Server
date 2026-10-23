@@ -15,9 +15,11 @@ from ..auth import require_admin, require_upload_token
 from ..errors import ApiError
 from ..extensions import db
 from ..models import Artifact, AuditLog, ChannelPointer, UsageEvent, Version, WebhookEvent, utcnow
+from ..services.delete_version import delete_version, ensure_cleanup_complete
 from ..services.force_update import set_force_update
 from ..services.github_release import download_file, prepare_catalog
 from ..services.retention import prune_dist
+from ..services.version_lock import version_operation
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 PLATFORMS = {"windows-x86_64", "linux-x86_64", "linux-aarch64", "darwin-x86_64", "darwin-aarch64"}
@@ -87,9 +89,11 @@ def version_detail(version):
 
 
 @api_bp.put("/artifacts/<version>/<filename>")
+@version_operation
 def upload_artifact(version, filename):
     require_upload_token()
     parse_version(version)
+    ensure_cleanup_complete(version)
     validate_filename(filename)
     platform = request.headers.get("X-Axolotl-Platform", "")
     architecture = request.headers.get("X-Axolotl-Architecture", "") or ("aarch64" if "aarch64" in platform else "x86_64")
@@ -259,6 +263,7 @@ def downloads_version(version):
 
 
 @api_bp.post("/webhook/release")
+@version_operation
 def release_webhook():
     raw = request.get_data(cache=True)
     timestamp = request.headers.get("X-Webhook-Timestamp", "")
@@ -279,6 +284,8 @@ def release_webhook():
     event_id = payload.get("event_id")
     if not event_id:
         raise ApiError("invalid_webhook", "event_id is required.")
+    if isinstance(payload.get("version"), str):
+        ensure_cleanup_complete(payload["version"])
     phash = hashlib.sha256(raw).hexdigest()
     existing_event = db.session.get(WebhookEvent, event_id)
     event = existing_event
@@ -303,6 +310,7 @@ def release_webhook():
         tag = payload.get("tag", "")
         channel = payload.get("channel", "")
         parsed = parse_version(version)
+        event.version = version
         release = payload.get("release")
         catalog = payload.get("catalog")
         if not isinstance(release, dict) or not isinstance(catalog, dict):
@@ -525,14 +533,17 @@ def _admin_change(version, restore=False):
 
 
 @api_bp.post("/admin/versions/<version>/revoke")
+@version_operation
 def revoke(version): return _admin_change(version)
 
 
 @api_bp.post("/admin/versions/<version>/restore")
+@version_operation
 def restore(version): return _admin_change(version, True)
 
 
 @api_bp.patch("/admin/versions/<version>/force-update")
+@version_operation
 def change_force_update(version):
     require_admin()
     parse_version(version)
@@ -545,6 +556,27 @@ def change_force_update(version):
     response = jsonify(set_force_update(
         version, body["force_update"], operator, reason,
         request.environ.get("request_id"), request.remote_addr,
+    ))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@api_bp.delete("/admin/versions/<version>")
+@version_operation
+def remove_version(version):
+    require_admin()
+    parse_version(version)
+    body = request.get_json(silent=True)
+    if body is None and not request.get_data():
+        body = {}
+    if not isinstance(body, dict):
+        raise ApiError("invalid_admin_metadata", "The request body must be a JSON object.")
+    operator, reason = body.get("operator", "admin"), body.get("reason", "")
+    if not isinstance(operator, str) or not operator.strip() or len(operator) > 128 or not isinstance(reason, str):
+        raise ApiError("invalid_admin_metadata", "operator and reason must be strings; operator must contain 1 to 128 characters.")
+    response = jsonify(delete_version(
+        version, operator, reason, request.environ.get("request_id"),
+        request.remote_addr, pointer_candidate,
     ))
     response.headers["Cache-Control"] = "no-store"
     return response

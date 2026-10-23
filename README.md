@@ -20,6 +20,14 @@ The Windows equivalent is `.venv\\Scripts\\python -m pip install -r requirements
 
 Complete endpoint documentation is available in [docs/API.md](docs/API.md).
 
+To remove a version for republishing, use `DELETE /api/admin/versions/<version>`
+with the admin Bearer token and optional `{"operator":"admin","reason":"Republish"}`.
+It removes local version files, artifact/version records and associated webhook
+events, recomputes both channel pointers, and records an audit log. Historical
+statistics and GitHub/CNB Releases are retained. Apply migration
+`0007_webhook_event_version` before startup. See the API reference for cleanup
+retry behavior, legacy webhook IDs and immutable CDN cache considerations.
+
 * `GET /api/health`, `GET /api/versions`, and `GET /api/versions/<version>` expose service/version data.
 * `GET /api/admin/stats?start=<ISO-8601>&end=<ISO-8601>` (admin token required) reports API calls grouped by client/request `version` and `channel`, plus downloads grouped by artifact `version`, `platform`, and `channel`, with count and bytes for a range of at most 30 days. Calls to `/latest` use `X-Axolotl-Version` as the client version; versioned API paths use their path version. The default range is the previous 24 hours. Requests served entirely by Caddy's static `/dist` handler do not pass through Flask; aggregate Caddy access logs separately for production-wide static-download metrics. Flask's `/dist` fallback requests are included automatically.
 * Upload with `PUT /api/artifacts/<version>/<filename>` and `X-Upload-Token`. The body is hashed server-side and stored below `DIST_ROOT/<version>/` (with the default `DIST_ROOT=./dist`, this is `./dist/<version>/`).

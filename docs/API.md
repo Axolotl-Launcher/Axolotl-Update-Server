@@ -325,6 +325,70 @@ The same event ID with a different payload returns `409 webhook_event_conflict`.
 
 All endpoints in this section require `Authorization: Bearer <ADMIN_TOKEN>`.
 
+### `DELETE /api/admin/versions/<version>`
+
+Deletes an Update Server version so the same SemVer can be published again.
+Accepts any version state, including revoked, failed, and uploading versions
+whose import operation is no longer running. Optional JSON body:
+
+```bash
+curl -X DELETE 'https://update.axlmc.org/api/admin/versions/1.9.4' \
+  -H 'Authorization: Bearer <ADMIN_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  -d '{"operator":"release-admin","reason":"Remove broken release for republishing"}'
+```
+
+`operator` defaults to `admin`; `reason` defaults to an empty string. The server:
+
+- Deletes the Version and all associated Artifact database records.
+- Removes `DIST_ROOT/<version>/` (packages, signatures and manifest), plus any
+  staging directories identified by the associated webhook events.
+- Deletes webhook events explicitly associated with the version so their IDs
+  can be reused with a new payload. For older events without a version field,
+  only an exact `github-<release_tag>-<release_id>` match is removed. Legacy
+  custom event IDs cannot be reliably associated; use a new event ID for those.
+- Recomputes both Release and Beta pointers using available published versions.
+- Writes a `delete_version` audit record; existing audit and usage history is retained.
+
+```json
+{
+  "status": "deleted",
+  "version": "1.9.4",
+  "idempotent": false,
+  "deleted_artifacts": 15,
+  "deleted_webhook_events": 1,
+  "channel_pointers": {"release": "1.9.3", "beta": "1.9.3"},
+  "files_cleanup_pending": false
+}
+```
+
+`deleted_artifacts` counts physical-file database records, including signature
+attachments; it is not necessarily the main-package count. A pointer is `null`
+if no eligible local version remains. Existing-version deletion returns `200`;
+unknown versions return `404 version_not_found`.
+
+Files are first moved to a sibling `.<dist-directory-name>-deletions` directory
+outside `DIST_ROOT`; if the database transaction fails they are moved back.
+The quarantine is removed after commit. If cleanup fails, the version is already
+deleted but `files_cleanup_pending` is `true`. Retry the same DELETE to remove
+remaining files; successful cleanup returns `idempotent: true`. A subsequent
+DELETE after cleanup is finished returns `404`. Finish pending cleanup before
+republishing. If rollback itself fails, `500 version_restore_failed` requires
+manual recovery of the quarantined files.
+
+Other errors: `400 invalid_version`, `400 invalid_admin_metadata`, `401` for
+invalid credentials, `409 version_busy` for a concurrent same-version operation,
+`409 unsafe_storage_path` for unsafe directory links, `409 version_cleanup_pending`
+for leftover quarantine conflicting with an existing version,
+`500 version_delete_failed`, or `500 version_cleanup_failed`.
+Mutating operations use a shared instance-directory file lock across workers
+on the same server; separate servers need shared coordination.
+
+Apply migration `0007_webhook_event_version` before deploying this endpoint.
+Deleting a version does not delete GitHub/CNB Releases or purge CDN/browser
+caches. Replacing content at the same immutable URL may require CDN cache purge;
+already-cached client copies cannot be recalled by this API.
+
 ### `PATCH /api/admin/versions/<version>/force-update`
 
 Enables or disables `force_update` on an existing published or revoked version.
