@@ -24,8 +24,8 @@ To remove a version for republishing, use `DELETE /api/admin/versions/<version>`
 with the admin Bearer token and optional `{"operator":"admin","reason":"Republish"}`.
 It removes local version files, artifact/version records and associated webhook
 events, recomputes both channel pointers, and records an audit log. Historical
-statistics and GitHub/CNB Releases are retained. Apply migration
-`0007_webhook_event_version` before startup. See the API reference for cleanup
+statistics and GitHub/CNB Releases are retained. Apply migrations through
+`0008_artifact_target_platforms` before startup. See the API reference for cleanup
 retry behavior, legacy webhook IDs and immutable CDN cache considerations.
 
 * `GET /api/health`, `GET /api/versions`, and `GET /api/versions/<version>` expose service/version data.
@@ -39,7 +39,7 @@ retry behavior, legacy webhook IDs and immutable CDN cache considerations.
 
 `/latest` returns a Tauri-compatible manifest with UTC `pub_date`, `published_at`, and `force_update`, server-generated ETags, and only `https://update.axlmc.org/dist/...` URLs. `force_update=true` tells Launcher to bypass its normal 24-hour Release delay; it never bypasses pause settings or signature verification. It returns `204` when no compatible update exists. ETag/304 is optional optimization and not required by the Launcher. Flask's development `/dist/<version>/<filename>` fallback supports GET, HEAD, and Range; revoked files remain downloadable by direct URL, but are never returned by `/latest`.
 
-Webhook payloads include public GitHub Release metadata and a catalog. `release.published_at` remains the update publication time. `catalog.files` lists all physical assets (including signatures), while `catalog.artifacts` lists only main updater/installer/portable artifacts. Updater artifacts must name their `.sig` companion with `signatureFilename`; its trimmed UTF-8 content becomes the Tauri signature. Complete packages may have an attachment but do not require a Tauri signature. Payloads may include `"force_update": true` (default is `false`):
+Webhook payloads include public GitHub Release metadata and a catalog. `release.published_at` remains the update publication time. `catalog.files` lists all physical assets (including signatures), while `catalog.artifacts` lists only main updater/installer/portable artifacts. Updater artifacts must name their `.sig` companion with `signatureFilename`; its trimmed UTF-8 content becomes the Tauri signature. An updater may also provide `targetPlatforms`; universal macOS artifacts map one file to both `darwin-aarch64` and `darwin-x86_64`. Complete packages may have an attachment but do not require a Tauri signature. Payloads may include `"force_update": true` (default is `false`):
 
 ```json
 {"event_id":"github-v1.10.0-123","tag":"v1.10.0","version":"1.10.0","channel":"release","force_update":true,"release":{"id":123,"tag_name":"v1.10.0","draft":false,"published_at":"2026-08-30T10:00:00Z","assets":[]},"catalog":{"version":"1.10.0","files":[],"artifacts":[]}}

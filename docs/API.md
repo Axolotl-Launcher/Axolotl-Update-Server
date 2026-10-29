@@ -64,6 +64,8 @@ Behavior:
 - `beta` returns the highest published stable Release or published beta prerelease.
 - Revoked, uploading, draft, invalid, or incomplete versions are excluded.
 - Only `kind=updater` artifacts with a non-empty Tauri signature are returned.
+- An updater can advertise multiple `targetPlatforms`; universal macOS updater artifacts are returned for both
+  `darwin-aarch64` and `darwin-x86_64`.
 - When no compatible update exists, the response is `204 No Content`.
 - Responses include an `ETag`; a matching `If-None-Match` may return `304 Not Modified`.
 
@@ -174,6 +176,7 @@ Example response:
       "id": 42,
       "kind": "installer",
       "platform": "windows",
+      "target_platforms": ["windows"],
       "architecture": "x86_64",
       "variant": "modern",
       "label": "Windows x64 Modern Installer",
@@ -279,6 +282,7 @@ Payload shape:
       {
         "filename": "update.tar.gz",
         "platform": "linux-x86_64",
+        "targetPlatforms": ["linux-x86_64"],
         "architecture": "x86_64",
         "kind": "updater",
         "signatureFilename": "update.tar.gz.sig"
@@ -298,6 +302,11 @@ Validation rules:
 - Only HTTPS URLs for `github.com/Axolotl-Launcher/Axolotl/releases/download/<tag>/<filename>` are accepted.
 - The server streams every physical file, including `.sig`, with size limits, timeout, retry, hash verification, fsync, and atomic rename.
 - `catalog.artifacts` contains main `updater`, `installer`, and `portable` entries only. Signature-only physical files are stored separately as private `kind=signature` rows.
+- Updater artifacts may provide `targetPlatforms`, an optional non-empty array of updater platform identifiers. The
+  primary `platform` must be present in the list, and effective target platforms must not overlap between updater
+  artifacts in the same release. `target_platforms` is accepted as a snake_case alias.
+- Universal macOS updater artifacts use `platform: "darwin-aarch64"` with
+  `targetPlatforms: ["darwin-aarch64", "darwin-x86_64"]`.
 - Every updater artifact must reference a `.sig` file through `signatureFilename`. Its trimmed UTF-8 contents become `Artifact.signature`; the `.sig` SHA-256 is not used as the Tauri signature.
 - Installers and portable packages may have signature attachments but do not require a Tauri signature.
 
@@ -537,4 +546,6 @@ Example:
 - Caddy serves existing `/dist` files directly, so those static hits do not enter Flask usage logging. Use Caddy access logs for complete production download statistics.
 - Flask fallback `/dist` requests are recorded in the application usage table.
 - Apply database migrations before production startup: `flask --app wsgi:app db upgrade`.
+- Migration `0008_artifact_target_platforms` backfills existing universal macOS updater artifacts to both
+  `darwin-aarch64` and `darwin-x86_64`.
 - The default production Gunicorn command uses two sync workers, a 1800-second timeout, and a 30-second graceful timeout.
