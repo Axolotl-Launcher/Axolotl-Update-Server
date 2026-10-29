@@ -24,7 +24,21 @@ def upgrade():
         sa.text(
             "UPDATE artifact SET target_platforms = :platforms "
             "WHERE kind = 'updater' AND platform = 'darwin-aarch64' "
-            "AND architecture = 'universal'"
+            "AND architecture = 'universal' "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM artifact AS conflict "
+            "WHERE conflict.version_id = artifact.version_id "
+            "AND conflict.id <> artifact.id "
+            "AND conflict.kind = 'updater' "
+            "AND ("
+            "conflict.platform = 'darwin-x86_64' "
+            "OR ("
+            "conflict.platform = 'darwin-aarch64' "
+            "AND conflict.architecture = 'universal' "
+            "AND conflict.id < artifact.id"
+            ")"
+            ")"
+            ")"
         ),
         {"platforms": json.dumps(["darwin-aarch64", "darwin-x86_64"])},
     )

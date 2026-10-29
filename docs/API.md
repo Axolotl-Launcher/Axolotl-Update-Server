@@ -305,6 +305,8 @@ Validation rules:
 - Updater artifacts may provide `targetPlatforms`, an optional non-empty array of updater platform identifiers. The
   primary `platform` must be present in the list, and effective target platforms must not overlap between updater
   artifacts in the same release. `target_platforms` is accepted as a snake_case alias.
+- Import validation also compares incoming updater targets with updater artifacts already stored for the same
+  unpublished version, excluding files being replaced by the incoming catalog.
 - Universal macOS updater artifacts use `platform: "darwin-aarch64"` with
   `targetPlatforms: ["darwin-aarch64", "darwin-x86_64"]`.
 - Every updater artifact must reference a `.sig` file through `signatureFilename`. Its trimmed UTF-8 contents become `Artifact.signature`; the `.sig` SHA-256 is not used as the Tauri signature.
@@ -547,5 +549,8 @@ Example:
 - Flask fallback `/dist` requests are recorded in the application usage table.
 - Apply database migrations before production startup: `flask --app wsgi:app db upgrade`.
 - Migration `0008_artifact_target_platforms` backfills existing universal macOS updater artifacts to both
-  `darwin-aarch64` and `darwin-x86_64`.
+  `darwin-aarch64` and `darwin-x86_64` unless another updater already claims Intel macOS. Stop the old service
+  workers before running the migration so no legacy worker can insert a universal updater after the backfill.
+- A manifest that would map one target platform to two different updater artifacts fails with
+  `500 ambiguous_updater_platform` instead of silently choosing one.
 - The default production Gunicorn command uses two sync workers, a 1800-second timeout, and a 30-second graceful timeout.

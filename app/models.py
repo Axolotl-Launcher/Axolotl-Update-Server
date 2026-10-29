@@ -54,6 +54,30 @@ def artifact_platforms(artifact: Artifact) -> list[str]:
         platforms = [target for target in targets if isinstance(target, str) and target]
         if platforms:
             return platforms
+    if (
+        artifact.kind == "updater"
+        and artifact.platform == "darwin-aarch64"
+        and artifact.architecture == "universal"
+    ):
+        version = artifact.version_ref if artifact.version_id else None
+        if version:
+            for other in version.artifacts:
+                if other is artifact or other.kind != "updater":
+                    continue
+                stored_targets = other.target_platforms
+                if isinstance(stored_targets, list) and "darwin-x86_64" in stored_targets:
+                    return ["darwin-aarch64"]
+                if other.platform == "darwin-x86_64":
+                    return ["darwin-aarch64"]
+                if (
+                    other.platform == "darwin-aarch64"
+                    and other.architecture == "universal"
+                    and other.id is not None
+                    and artifact.id is not None
+                    and other.id < artifact.id
+                ):
+                    return ["darwin-aarch64"]
+        return ["darwin-aarch64", "darwin-x86_64"]
     return [artifact.platform] if artifact.platform else []
 
 

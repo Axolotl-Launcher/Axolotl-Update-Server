@@ -28,6 +28,7 @@ from ..services.delete_version import delete_version, ensure_cleanup_complete
 from ..services.force_update import set_force_update
 from ..services.github_release import download_file, prepare_catalog
 from ..services.retention import prune_dist
+from ..services.updater_manifest import updater_manifest_platforms
 from ..services.version_lock import version_operation
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -382,6 +383,35 @@ def release_webhook():
         existing_version = Version.query.filter_by(version=version).first()
         if existing_version and existing_version.status == "published":
             raise ApiError("version_immutable", "Published versions cannot be imported again.", 409)
+        incoming_filenames = {
+            artifact.get("filename")
+            for artifact in artifacts
+            if isinstance(artifact, dict) and isinstance(artifact.get("filename"), str)
+        }
+        stored_updater_platforms = set()
+        if existing_version:
+            for artifact in existing_version.artifacts:
+                if (
+                    artifact.filename in incoming_filenames
+                    or artifact.kind != "updater"
+                    or not artifact.signature
+                ):
+                    continue
+                stored_updater_platforms.update(artifact_platforms(artifact))
+        preflight_updater_platforms = set()
+        for artifact in artifacts:
+            if not isinstance(artifact, dict) or artifact.get("kind", "updater") != "updater":
+                continue
+            platform = artifact.get("platform")
+            if platform not in PLATFORMS:
+                raise ApiError("invalid_artifact_platform", "Updater platform is not supported.")
+            targets = parse_updater_platforms(artifact, platform)
+            if any(
+                target in stored_updater_platforms or target in preflight_updater_platforms
+                for target in targets
+            ):
+                raise ApiError("duplicate_artifact", "Updater platforms must be unique.")
+            preflight_updater_platforms.update(targets)
         v = existing_version or Version(version=version, channel=channel, status="uploading")
         v.channel, v.notes, v.release_tag, v.release_id = channel, release.get("body", ""), tag, str(release["id"])
         v.force_update, v.published_at, v.status = bool(payload.get("force_update", False)), published_at, "uploading"
@@ -420,7 +450,10 @@ def release_webhook():
                 if platform not in PLATFORMS:
                     raise ApiError("invalid_artifact_platform", "Updater platform is not supported.")
                 target_platforms = parse_updater_platforms(a_data, platform)
-                if any(target in seen_updater_platforms for target in target_platforms):
+                if any(
+                    target in seen_updater_platforms or target in stored_updater_platforms
+                    for target in target_platforms
+                ):
                     raise ApiError("duplicate_artifact", "Updater platforms must be unique.")
                 seen_updater_platforms.update(target_platforms)
                 signature_filename = a_data.get("signatureFilename") or a_data.get("signature_filename")
@@ -496,15 +529,10 @@ def release_webhook():
             sig.content_type = "application/octet-stream"
         db.session.flush()
         db.session.expire(v, ["artifacts"])
-        manifest_platforms = {}
-        for artifact in v.artifacts:
-            if artifact.kind != "updater" or not artifact.signature:
-                continue
-            for target in artifact_platforms(artifact):
-                manifest_platforms[target] = {
-                    "signature": artifact.signature,
-                    "url": f"{current_app.config['PUBLIC_BASE_URL']}/{artifact.relative_path}",
-                }
+        manifest_platforms = updater_manifest_platforms(
+            v.artifacts,
+            current_app.config["PUBLIC_BASE_URL"],
+        )
         manifest = {"version": v.version, "notes": v.notes or "", "pub_date": published_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "published_at": published_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "force_update": bool(v.force_update), "platforms": manifest_platforms}
         if not manifest["platforms"]:
             raise ApiError("missing_artifacts", "At least one signed updater artifact is required.")

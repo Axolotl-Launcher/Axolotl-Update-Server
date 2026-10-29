@@ -10,6 +10,7 @@ from ..errors import ApiError
 from ..models import Artifact, Version, artifact_platforms, utcnow
 from ..services.github_release import github_asset_url
 from ..services.retention import retained_versions
+from ..services.updater_manifest import updater_manifest_platforms
 
 latest_bp = Blueprint("latest", __name__)
 
@@ -32,21 +33,6 @@ def artifact_available(version, platform):
         if path.is_file() and path.stat().st_size == artifact.size:
             return True
     return False
-
-
-def updater_manifest_platforms(artifacts, platform=None):
-    platforms = {}
-    for artifact in artifacts:
-        if artifact.kind != "updater" or not artifact.signature:
-            continue
-        for target in artifact_platforms(artifact):
-            if platform and target != platform:
-                continue
-            platforms[target] = {
-                "signature": artifact.signature,
-                "url": f"{current_app.config['PUBLIC_BASE_URL']}/{artifact.relative_path}",
-            }
-    return platforms
 
 
 @latest_bp.get("/latest")
@@ -91,7 +77,11 @@ def latest():
         ]
     if not candidates: return Response(status=204)
     chosen = max(candidates, key=lambda v: SemVersion.parse(v.version))
-    platforms = updater_manifest_platforms(chosen.artifacts, platform or None)
+    platforms = updater_manifest_platforms(
+        chosen.artifacts,
+        current_app.config["PUBLIC_BASE_URL"],
+        platform or None,
+    )
     if platform and platform not in platforms: return Response(status=204)
     published_at = iso_utc(chosen.published_at or utcnow())
     payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": published_at, "published_at": published_at, "force_update": bool(chosen.force_update), "platforms": platforms}

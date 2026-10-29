@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from app.extensions import db
+from app.models import Artifact, Version, artifact_platforms, utcnow
+
 
 def signed_post(client, payload):
     raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -136,6 +139,109 @@ def test_updater_rejects_overlapping_target_platforms(client, app):
 
     assert response.status_code == 400
     assert response.json["error"]["code"] == "duplicate_artifact"
+
+
+def test_webhook_rejects_overlap_with_stored_updater(client, app):
+    bodies, payload = universal_payload()
+    with app.app_context():
+        version = Version(version="1.9.4", channel="release", status="uploading")
+        db.session.add(version)
+        db.session.flush()
+        db.session.add(Artifact(
+            version_id=version.id,
+            platform="darwin-x86_64",
+            target_platforms=["darwin-x86_64"],
+            architecture="x86_64",
+            filename="stored-intel.tar.gz",
+            relative_path="dist/1.9.4/stored-intel.tar.gz",
+            size=1,
+            sha256="0" * 64,
+            signature="stored-signature",
+            content_type="application/octet-stream",
+            kind="updater",
+        ))
+        db.session.commit()
+
+    with app.app_context():
+        stored = Version.query.filter_by(version="1.9.4").one()
+        assert [artifact_platforms(artifact) for artifact in stored.artifacts] == [
+            ["darwin-x86_64"]
+        ]
+
+    response = signed_post(client, payload)
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "duplicate_artifact"
+
+
+def test_latest_rejects_ambiguous_updater_platforms(client, app):
+    with app.app_context():
+        version = Version(
+            version="1.9.4",
+            channel="release",
+            status="published",
+            published_at=utcnow(),
+        )
+        db.session.add(version)
+        db.session.flush()
+        directory = Path(app.config["DIST_ROOT"], "1.9.4")
+        directory.mkdir(parents=True)
+        for filename, targets in (
+            ("universal.tar.gz", ["darwin-aarch64", "darwin-x86_64"]),
+            ("intel.tar.gz", ["darwin-x86_64"]),
+        ):
+            (directory / filename).write_bytes(b"x")
+            db.session.add(Artifact(
+                version_id=version.id,
+                platform="darwin-aarch64" if "universal" in filename else "darwin-x86_64",
+                target_platforms=targets,
+                architecture="universal" if "universal" in filename else "x86_64",
+                filename=filename,
+                relative_path=f"dist/1.9.4/{filename}",
+                size=1,
+                sha256="0" * 64,
+                signature=f"{filename}-signature",
+                content_type="application/octet-stream",
+                kind="updater",
+            ))
+        db.session.commit()
+
+    response = client.get("/latest?platform=darwin-x86_64")
+
+    assert response.status_code == 500
+    assert response.json["error"]["code"] == "ambiguous_updater_platform"
+
+
+def test_legacy_universal_updater_still_targets_both_darwin_platforms(client, app):
+    with app.app_context():
+        version = Version(
+            version="1.9.4",
+            channel="release",
+            status="published",
+            published_at=utcnow(),
+        )
+        db.session.add(version)
+        db.session.flush()
+        filename = "legacy-universal.tar.gz"
+        directory = Path(app.config["DIST_ROOT"], "1.9.4")
+        directory.mkdir(parents=True)
+        (directory / filename).write_bytes(b"x")
+        db.session.add(Artifact(
+            version_id=version.id,
+            platform="darwin-aarch64",
+            target_platforms=None,
+            architecture="universal",
+            filename=filename,
+            relative_path=f"dist/1.9.4/{filename}",
+            size=1,
+            sha256="0" * 64,
+            signature="legacy-signature",
+            content_type="application/octet-stream",
+            kind="updater",
+        ))
+        db.session.commit()
+
+    assert client.get("/latest?platform=darwin-x86_64").status_code == 200
 
 
 def test_catalog_and_release_validation(client, app):
