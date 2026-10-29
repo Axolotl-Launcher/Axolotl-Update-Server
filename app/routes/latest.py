@@ -7,7 +7,7 @@ from flask import Blueprint, Response, current_app, jsonify, redirect, request
 from semver import Version as SemVersion
 
 from ..errors import ApiError
-from ..models import Artifact, Version, utcnow
+from ..models import Artifact, Version, artifact_platforms, utcnow
 from ..services.github_release import github_asset_url
 from ..services.retention import retained_versions
 
@@ -22,12 +22,31 @@ def iso_utc(value):
 
 def artifact_available(version, platform):
     for artifact in version.artifacts:
-        if artifact.platform != platform or artifact.kind != "updater" or not artifact.signature:
+        if (
+            platform not in artifact_platforms(artifact)
+            or artifact.kind != "updater"
+            or not artifact.signature
+        ):
             continue
         path = Path(current_app.config["DIST_ROOT"]) / version.version / artifact.filename
         if path.is_file() and path.stat().st_size == artifact.size:
             return True
     return False
+
+
+def updater_manifest_platforms(artifacts, platform=None):
+    platforms = {}
+    for artifact in artifacts:
+        if artifact.kind != "updater" or not artifact.signature:
+            continue
+        for target in artifact_platforms(artifact):
+            if platform and target != platform:
+                continue
+            platforms[target] = {
+                "signature": artifact.signature,
+                "url": f"{current_app.config['PUBLIC_BASE_URL']}/{artifact.relative_path}",
+            }
+    return platforms
 
 
 @latest_bp.get("/latest")
@@ -72,9 +91,7 @@ def latest():
         ]
     if not candidates: return Response(status=204)
     chosen = max(candidates, key=lambda v: SemVersion.parse(v.version))
-    artifacts = [a for a in chosen.artifacts if a.platform == platform] if platform else chosen.artifacts
-    if platform and not artifacts: return Response(status=204)
-    platforms = {a.platform: {"signature": a.signature, "url": f"{current_app.config['PUBLIC_BASE_URL']}/{a.relative_path}"} for a in artifacts if a.kind == "updater" and a.signature}
+    platforms = updater_manifest_platforms(chosen.artifacts, platform or None)
     if platform and platform not in platforms: return Response(status=204)
     published_at = iso_utc(chosen.published_at or utcnow())
     payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": published_at, "published_at": published_at, "force_update": bool(chosen.force_update), "platforms": platforms}

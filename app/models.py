@@ -29,6 +29,7 @@ class Artifact(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     version_id = db.Column(db.Integer, db.ForeignKey("version.id"), nullable=False)
     platform = db.Column(db.String(64), nullable=False)
+    target_platforms = db.Column(db.JSON, nullable=True)
     architecture = db.Column(db.String(32), default="")
     filename = db.Column(db.String(255), nullable=False)
     relative_path = db.Column(db.String(512), nullable=False, unique=True)
@@ -45,6 +46,15 @@ class Artifact(db.Model):
     uploaded_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+def artifact_platforms(artifact: Artifact) -> list[str]:
+    targets = artifact.target_platforms
+    if isinstance(targets, list):
+        platforms = [target for target in targets if isinstance(target, str) and target]
+        if platforms:
+            return platforms
+    return [artifact.platform] if artifact.platform else []
 
 
 class ChannelPointer(db.Model):
