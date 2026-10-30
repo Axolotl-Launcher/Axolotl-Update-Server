@@ -29,6 +29,7 @@ class Artifact(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     version_id = db.Column(db.Integer, db.ForeignKey("version.id"), nullable=False)
     platform = db.Column(db.String(64), nullable=False)
+    target_platforms = db.Column(db.JSON, nullable=True)
     architecture = db.Column(db.String(32), default="")
     filename = db.Column(db.String(255), nullable=False)
     relative_path = db.Column(db.String(512), nullable=False, unique=True)
@@ -45,6 +46,39 @@ class Artifact(db.Model):
     uploaded_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+def artifact_platforms(artifact: Artifact) -> list[str]:
+    targets = artifact.target_platforms
+    if isinstance(targets, list):
+        platforms = [target for target in targets if isinstance(target, str) and target]
+        if platforms:
+            return platforms
+    if (
+        artifact.kind == "updater"
+        and artifact.platform == "darwin-aarch64"
+        and artifact.architecture == "universal"
+    ):
+        version = artifact.version_ref if artifact.version_id else None
+        if version:
+            for other in version.artifacts:
+                if other is artifact or other.kind != "updater":
+                    continue
+                stored_targets = other.target_platforms
+                if isinstance(stored_targets, list) and "darwin-x86_64" in stored_targets:
+                    return ["darwin-aarch64"]
+                if other.platform == "darwin-x86_64":
+                    return ["darwin-aarch64"]
+                if (
+                    other.platform == "darwin-aarch64"
+                    and other.architecture == "universal"
+                    and other.id is not None
+                    and artifact.id is not None
+                    and other.id < artifact.id
+                ):
+                    return ["darwin-aarch64"]
+        return ["darwin-aarch64", "darwin-x86_64"]
+    return [artifact.platform] if artifact.platform else []
 
 
 class ChannelPointer(db.Model):

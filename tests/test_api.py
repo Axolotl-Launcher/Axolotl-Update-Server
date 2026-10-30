@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from app.extensions import db
+from app.models import Artifact, Version, artifact_platforms, utcnow
+
 
 def signed_post(client, payload):
     raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -27,6 +30,23 @@ def payload_for(files=None, *, version="1.9.4", channel="release", force_update=
     return {"event_id": f"github-{version}-1", "tag": tag, "version": version, "channel": channel, "force_update": force_update, "release": {"id": 123, "tag_name": tag, "body": "Release notes", "published_at": "2026-08-29T15:19:00Z", "draft": False, "assets": assets}, "catalog": {"version": version, "files": catalog_files, "artifacts": [{"filename": "update.tar.gz", "platform": "linux-x86_64", "architecture": "x86_64", "kind": "updater", "signatureFilename": "update.tar.gz.sig"}, {"filename": "installer.exe", "platform": "windows", "architecture": "x86_64", "kind": "installer", "variant": "modern"}]}}
 
 
+def universal_payload():
+    bodies = {
+        "Axolotl.Launcher_universal.app.tar.gz": b"universal-update",
+        "Axolotl.Launcher_universal.app.tar.gz.sig": b"universal-signature\n",
+        "installer.exe": b"installer",
+    }
+    payload = payload_for(bodies)
+    payload["catalog"]["artifacts"][0].update({
+        "filename": "Axolotl.Launcher_universal.app.tar.gz",
+        "platform": "darwin-aarch64",
+        "targetPlatforms": ["darwin-aarch64", "darwin-x86_64"],
+        "architecture": "universal",
+        "signatureFilename": "Axolotl.Launcher_universal.app.tar.gz.sig",
+    })
+    return bodies, payload
+
+
 def configure_downloads(app, bodies, version="1.9.4"):
     urls = {f"https://github.com/Axolotl-Launcher/Axolotl/releases/download/v{version}/{filename}": body for filename, body in bodies.items()}
     app.config["GITHUB_DOWNLOAD_OPEN"] = lambda url, _timeout: io.BytesIO(urls[url])
@@ -40,6 +60,188 @@ def test_health_and_stream_import(client, app):
     assert client.get("/latest?platform=linux-x86_64").json["version"] == "1.9.4"
     assert Path(app.config["DIST_ROOT"], "1.9.4", "update.tar.gz").read_bytes() == b"update"
     assert client.get("/api/downloads/1.9.4").json["downloads"][0]["kind"] == "installer"
+
+
+def test_universal_updater_is_available_to_both_darwin_targets(client, app):
+    bodies, payload = universal_payload()
+    configure_downloads(app, bodies)
+
+    assert signed_post(client, payload).status_code == 200
+
+    arm = client.get("/latest?platform=darwin-aarch64").json
+    intel = client.get("/latest?platform=darwin-x86_64").json
+    assert arm["version"] == intel["version"] == "1.9.4"
+    assert arm["platforms"]["darwin-aarch64"] == intel["platforms"]["darwin-x86_64"]
+    assert arm["platforms"]["darwin-aarch64"]["url"].endswith(
+        "/dist/1.9.4/Axolotl.Launcher_universal.app.tar.gz"
+    )
+
+    generic = client.get("/latest").json
+    assert set(generic["platforms"]) == {"darwin-aarch64", "darwin-x86_64"}
+    detail = client.get("/api/versions/1.9.4").json
+    universal = next(
+        artifact
+        for artifact in detail["artifacts"]
+        if artifact["filename"] == "Axolotl.Launcher_universal.app.tar.gz"
+    )
+    assert universal["target_platforms"] == ["darwin-aarch64", "darwin-x86_64"]
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        [],
+        ["darwin-x86_64"],
+        ["darwin-aarch64", "unsupported-platform"],
+        ["darwin-aarch64", "darwin-aarch64"],
+    ],
+)
+def test_updater_rejects_invalid_target_platforms(client, app, targets):
+    bodies, payload = universal_payload()
+    payload["catalog"]["artifacts"][0]["targetPlatforms"] = targets
+    configure_downloads(app, bodies)
+
+    response = signed_post(client, payload)
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "invalid_artifact_platform"
+
+
+def test_updater_rejects_overlapping_target_platforms(client, app):
+    bodies = {
+        "arm.tar.gz": b"arm-update",
+        "arm.tar.gz.sig": b"arm-signature\n",
+        "intel.tar.gz": b"intel-update",
+        "intel.tar.gz.sig": b"intel-signature\n",
+    }
+    payload = payload_for(bodies)
+    payload["catalog"]["artifacts"] = [
+        {
+            "filename": "arm.tar.gz",
+            "platform": "darwin-aarch64",
+            "targetPlatforms": ["darwin-aarch64", "darwin-x86_64"],
+            "architecture": "universal",
+            "kind": "updater",
+            "signatureFilename": "arm.tar.gz.sig",
+        },
+        {
+            "filename": "intel.tar.gz",
+            "platform": "darwin-x86_64",
+            "targetPlatforms": ["darwin-x86_64"],
+            "architecture": "x86_64",
+            "kind": "updater",
+            "signatureFilename": "intel.tar.gz.sig",
+        },
+    ]
+    configure_downloads(app, bodies)
+
+    response = signed_post(client, payload)
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "duplicate_artifact"
+
+
+def test_webhook_rejects_overlap_with_stored_updater(client, app):
+    bodies, payload = universal_payload()
+    with app.app_context():
+        version = Version(version="1.9.4", channel="release", status="uploading")
+        db.session.add(version)
+        db.session.flush()
+        db.session.add(Artifact(
+            version_id=version.id,
+            platform="darwin-x86_64",
+            target_platforms=["darwin-x86_64"],
+            architecture="x86_64",
+            filename="stored-intel.tar.gz",
+            relative_path="dist/1.9.4/stored-intel.tar.gz",
+            size=1,
+            sha256="0" * 64,
+            signature="stored-signature",
+            content_type="application/octet-stream",
+            kind="updater",
+        ))
+        db.session.commit()
+
+    with app.app_context():
+        stored = Version.query.filter_by(version="1.9.4").one()
+        assert [artifact_platforms(artifact) for artifact in stored.artifacts] == [
+            ["darwin-x86_64"]
+        ]
+
+    response = signed_post(client, payload)
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "duplicate_artifact"
+
+
+def test_latest_rejects_ambiguous_updater_platforms(client, app):
+    with app.app_context():
+        version = Version(
+            version="1.9.4",
+            channel="release",
+            status="published",
+            published_at=utcnow(),
+        )
+        db.session.add(version)
+        db.session.flush()
+        directory = Path(app.config["DIST_ROOT"], "1.9.4")
+        directory.mkdir(parents=True)
+        for filename, targets in (
+            ("universal.tar.gz", ["darwin-aarch64", "darwin-x86_64"]),
+            ("intel.tar.gz", ["darwin-x86_64"]),
+        ):
+            (directory / filename).write_bytes(b"x")
+            db.session.add(Artifact(
+                version_id=version.id,
+                platform="darwin-aarch64" if "universal" in filename else "darwin-x86_64",
+                target_platforms=targets,
+                architecture="universal" if "universal" in filename else "x86_64",
+                filename=filename,
+                relative_path=f"dist/1.9.4/{filename}",
+                size=1,
+                sha256="0" * 64,
+                signature=f"{filename}-signature",
+                content_type="application/octet-stream",
+                kind="updater",
+            ))
+        db.session.commit()
+
+    response = client.get("/latest?platform=darwin-x86_64")
+
+    assert response.status_code == 500
+    assert response.json["error"]["code"] == "ambiguous_updater_platform"
+
+
+def test_legacy_universal_updater_still_targets_both_darwin_platforms(client, app):
+    with app.app_context():
+        version = Version(
+            version="1.9.4",
+            channel="release",
+            status="published",
+            published_at=utcnow(),
+        )
+        db.session.add(version)
+        db.session.flush()
+        filename = "legacy-universal.tar.gz"
+        directory = Path(app.config["DIST_ROOT"], "1.9.4")
+        directory.mkdir(parents=True)
+        (directory / filename).write_bytes(b"x")
+        db.session.add(Artifact(
+            version_id=version.id,
+            platform="darwin-aarch64",
+            target_platforms=None,
+            architecture="universal",
+            filename=filename,
+            relative_path=f"dist/1.9.4/{filename}",
+            size=1,
+            sha256="0" * 64,
+            signature="legacy-signature",
+            content_type="application/octet-stream",
+            kind="updater",
+        ))
+        db.session.commit()
+
+    assert client.get("/latest?platform=darwin-x86_64").status_code == 200
 
 
 def test_catalog_and_release_validation(client, app):
