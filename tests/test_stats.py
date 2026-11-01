@@ -32,8 +32,18 @@ def test_stats_requires_admin_and_limits_range(client):
     assert response.json["error"]["code"] == "invalid_stats_range"
 
 
-def test_request_hook_records_latest_version_and_download_dimensions(client, app):
+def test_requests_do_not_record_usage_or_commit_statistics(client, app, monkeypatch):
+    def unexpected_commit():
+        raise AssertionError("Read-only requests must not commit statistics")
+
+    monkeypatch.setattr(db.session, "commit", unexpected_commit)
     client.get("/latest?channel=beta", headers={"X-Axolotl-Version": "1.9.3"})
+    client.get("/api/health")
+    client.get("/api/downloads/latest")
+    client.get("/dist/1.9.4/missing.zip")
     response = client.get("/api/admin/stats", headers={"Authorization": "Bearer admin"})
     assert response.status_code == 200
-    assert {tuple(item[key] for key in ("version", "channel")) for item in response.json["api_calls"]["groups"]} >= {("1.9.3", "beta")}
+    assert response.json["api_calls"]["total"] == 0
+    assert response.json["downloads"]["total_count"] == 0
+    with app.app_context():
+        assert UsageEvent.query.count() == 0

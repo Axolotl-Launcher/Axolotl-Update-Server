@@ -35,13 +35,7 @@ def artifact_available(version, platform):
     return False
 
 
-@latest_bp.get("/latest")
-def latest():
-    channel = request.headers.get("X-Axolotl-Channel") or request.args.get("channel", "release")
-    platform = request.headers.get("X-Axolotl-Platform") or request.args.get("platform", "")
-    current = request.headers.get("X-Axolotl-Version") or request.args.get("current_version", "")
-    if channel not in ("release", "beta"):
-        raise ApiError("invalid_channel", "Only release and beta channels are supported.")
+def latest_payload(channel, platform, current):
     if channel == "release":
         candidates = Version.query.filter_by(channel="release", status="published").all()
         invalid = [v for v in candidates if SemVersion.parse(v.version).prerelease]
@@ -75,20 +69,64 @@ def latest():
             v for v in candidates
             if artifact_available(v, platform)
         ]
-    if not candidates: return Response(status=204)
+    if not candidates: return None
     chosen = max(candidates, key=lambda v: SemVersion.parse(v.version))
     platforms = updater_manifest_platforms(
         chosen.artifacts,
         current_app.config["PUBLIC_BASE_URL"],
         platform or None,
     )
-    if platform and platform not in platforms: return Response(status=204)
+    if platform and platform not in platforms: return None
     published_at = iso_utc(chosen.published_at or utcnow())
-    payload = {"version": chosen.version, "notes": chosen.notes or "", "pub_date": published_at, "published_at": published_at, "force_update": bool(chosen.force_update), "platforms": platforms}
+    return {"version": chosen.version, "notes": chosen.notes or "", "pub_date": published_at, "published_at": published_at, "force_update": bool(chosen.force_update), "platforms": platforms}
+
+
+@latest_bp.after_request
+def latest_cache_headers(response):
+    if request.path != "/latest":
+        return response
+    response.vary.update(("X-Axolotl-Channel", "X-Axolotl-Platform", "X-Axolotl-Version"))
+    ttl = max(0, int(current_app.config.get("LATEST_CACHE_SECONDS", 30)))
+    variant_headers = any(request.headers.get(name) for name in ("X-Axolotl-Channel", "X-Axolotl-Platform", "X-Axolotl-Version"))
+    if response.status_code not in (200, 204, 304) or request.headers.get("Authorization") or request.headers.get("Cookie"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
+    elif variant_headers and not current_app.config.get("LATEST_CDN_HEADER_CACHE_KEY", False):
+        # Cloudflare does not key on arbitrary Vary headers. A custom CDN
+        # cache key must separate channel/platform/current version at the edge.
+        response.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+        response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
+    else:
+        response.headers["Cache-Control"] = f"public, max-age=0, s-maxage={ttl}, must-revalidate"
+        response.headers["Cloudflare-CDN-Cache-Control"] = f"public, max-age={ttl}"
+    return response
+
+
+@latest_bp.get("/latest")
+def latest():
+    channel = request.headers.get("X-Axolotl-Channel") or request.args.get("channel", "release")
+    platform = request.headers.get("X-Axolotl-Platform") or request.args.get("platform", "")
+    current = request.headers.get("X-Axolotl-Version") or request.args.get("current_version", "")
+    if channel not in ("release", "beta"):
+        raise ApiError("invalid_channel", "Only release and beta channels are supported.")
+    if current:
+        try:
+            SemVersion.parse(current)
+        except ValueError as exc:
+            raise ApiError("invalid_version", "Current version must be valid SemVer.") from exc
+    payload = current_app.extensions["latest_cache"].get_or_build(
+        (channel, platform, current), current_app.config.get("LATEST_CACHE_SECONDS", 30),
+        lambda: latest_payload(channel, platform, current),
+    )
+    if payload is None:
+        return Response(status=204)
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     etag = hashlib.sha256(body.encode()).hexdigest()
-    if request.if_none_match and request.if_none_match.contains(etag): return Response(status=304, headers={"ETag": etag})
-    response = jsonify(payload); response.headers["ETag"] = etag; response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"; return response
+    if request.if_none_match and request.if_none_match.contains(etag):
+        return Response(status=304, headers={"ETag": etag})
+    response = jsonify(payload)
+    response.set_etag(etag)
+    return response
 
 
 @latest_bp.get("/dist/<version>/<path:filename>")

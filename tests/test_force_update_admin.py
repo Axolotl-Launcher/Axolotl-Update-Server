@@ -45,7 +45,7 @@ def test_toggle_force_update_updates_responses_manifest_etag_and_audit(client, a
         response = client.patch(URL, headers=AUTH, json={"force_update": enabled, "operator": "release-admin", "reason": "Urgent fix"})
         assert response.status_code == 200
         assert response.json == {"version": "1.9.4", "status": "published", "force_update": enabled, "idempotent": False}
-        latest = client.get("/latest?platform=linux-x86_64", headers={"If-None-Match": '"' + before.headers["ETag"] + '"'})
+        latest = client.get("/latest?platform=linux-x86_64", headers={"If-None-Match": before.headers["ETag"]})
         assert latest.status_code == 200
         assert latest.json["force_update"] is enabled
         assert latest.headers["ETag"] != before.headers["ETag"]

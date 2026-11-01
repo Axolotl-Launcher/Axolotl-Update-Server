@@ -68,6 +68,18 @@ Behavior:
   `darwin-aarch64` and `darwin-x86_64`.
 - When no compatible update exists, the response is `204 No Content`.
 - Responses include an `ETag`; a matching `If-None-Match` may return `304 Not Modified`.
+- Responses are cached at the origin for `LATEST_CACHE_SECONDS` (default 30),
+  separately by channel, platform and current version. Successful version changes
+  invalidate all workers through a shared revision file. This endpoint performs
+  no usage/statistics writes. Only Gunicorn emits HTTP access log lines.
+- Successful `200`, `204` and `304` responses include cache policy and `Vary` for
+  all three X-Axolotl variant headers. Query-only requests permit short shared
+  caching via `s-maxage` and `Cloudflare-CDN-Cache-Control`. Header-based requests
+  default to private/no-store at the CDN because Cloudflare does not key on
+  arbitrary `Vary` headers. Enable `LATEST_CDN_HEADER_CACHE_KEY=true` only after
+  configuring a native Cloudflare cache key containing all three headers plus
+  all query parameters. See README for native Cache Rules. Errors and requests
+  with Authorization/Cookie use no-store. Caddy must not override these headers.
 
 Example response:
 
@@ -501,7 +513,10 @@ Returns revoke and restore audit records:
 
 ### `GET /api/admin/stats`
 
-Returns usage metrics for a time range of at most 30 days.
+Legacy read-only history endpoint for ranges of at most 30 days. Usage collection
+is disabled. Run `flask --app wsgi:app purge-usage` with the server stopped to
+delete existing statistics and VACUUM SQLite; after cleanup, this endpoint
+returns empty groups and zero totals. It remains available for compatibility.
 
 Query parameters:
 
@@ -541,19 +556,19 @@ Example:
 }
 ```
 
-`/latest` uses `X-Axolotl-Version` as the client version. Versioned API paths use their path version. For `/dist/<version>/<filename>`, the version comes from the path and platform is taken from the request header or artifact metadata. Missing or invalid channels are recorded as `unknown`.
+Historical rows used client/request version for API calls and artifact version,
+platform and channel for downloads. No new rows are collected.
 
 ## Operational Notes
 
-- Admin audit `ip_address`, rate limiting and application/Gunicorn access logs use
+- Admin audit `ip_address`, rate limiting and Gunicorn access logs use
   the resolved client IP behind trusted Cloudflare/Caddy proxies. Forwarded
   headers from untrusted socket peers are ignored. Configure
   `TRUSTED_PROXY_CIDRS` for a different proxy topology; see README's Cloudflare
-  deployment instructions. Application access records include `client_ip`,
-  `proxy_peer`, method, path, status, request ID and duration; Caddy's JSON access
-  logs include static requests. Historical audit IPs remain unchanged.
-- Caddy serves existing `/dist` files directly, so those static hits do not enter Flask usage logging. Use Caddy access logs for complete production download statistics.
-- Flask fallback `/dist` requests are recorded in the application usage table.
+  deployment instructions. Duplicate Flask JSON access logging is disabled.
+  Historical audit IPs remain unchanged.
+- Caddy serves existing `/dist` files directly. Usage/database statistics are
+  disabled for both Flask API calls and download fallback requests.
 - Apply database migrations before production startup: `flask --app wsgi:app db upgrade`.
 - Migration `0008_artifact_target_platforms` backfills existing universal macOS updater artifacts to both
   `darwin-aarch64` and `darwin-x86_64` unless another updater already claims Intel macOS. Stop the old service

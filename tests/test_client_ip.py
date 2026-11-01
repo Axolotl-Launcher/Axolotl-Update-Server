@@ -1,4 +1,3 @@
-import json
 import logging
 
 import pytest
@@ -26,7 +25,7 @@ from app.services.client_ip import ClientIPMiddleware
     ("127.0.0.1", {"X-Forwarded-For": "203.0.113.12, 172.64.0.10", "CF-Connecting-IP": "bad"}, "203.0.113.12"),
     ("127.0.0.1", {}, "127.0.0.1"),
 ])
-def test_real_client_ip_in_audit_and_log(client, app, caplog, peer, headers, expected):
+def test_real_client_ip_in_audit_without_duplicate_app_log(client, app, caplog, peer, headers, expected):
     with app.app_context():
         db.session.add(Version(version="1.9.4", channel="release", status="published", published_at=utcnow()))
         db.session.commit()
@@ -39,23 +38,16 @@ def test_real_client_ip_in_audit_and_log(client, app, caplog, peer, headers, exp
     assert response.status_code == 200
     with app.app_context():
         assert AuditLog.query.one().ip_address == expected
-    record = next(record for record in caplog.records if record.getMessage().startswith("request "))
-    message = record.getMessage()
-    logged = json.loads(message.removeprefix("request "))
-    assert logged["client_ip"] == expected and logged["proxy_peer"] == peer
-    assert logged["request_id"] == response.headers["X-Request-ID"]
-    assert logged["status"] == 200 and logged["method"] == "POST"
-    assert "not-logged" not in message and "Bearer" not in message
+    assert response.headers["X-Request-ID"]
+    assert not any(record.getMessage().startswith("request ") for record in caplog.records)
 
 
-def test_rate_limit_is_per_resolved_client_and_errors_are_logged(client, app, caplog):
+def test_rate_limit_is_per_resolved_client(client, app):
     app.config["RATE_LIMIT_PER_MINUTE"] = 1
     assert client.get("/api/health", headers={"X-Forwarded-For": "203.0.113.1"}).status_code == 200
     assert client.get("/api/health", headers={"X-Forwarded-For": "203.0.113.2"}).status_code == 200
-    with caplog.at_level(logging.INFO):
-        response = client.get("/api/health", headers={"X-Forwarded-For": "203.0.113.1"})
+    response = client.get("/api/health", headers={"X-Forwarded-For": "203.0.113.1"})
     assert response.status_code == 429 and response.headers["X-Request-ID"]
-    assert any('"status": 429' in record.getMessage() and '"client_ip": "203.0.113.1"' in record.getMessage() for record in caplog.records)
 
 
 def test_custom_trust_and_disabled_forwarding():

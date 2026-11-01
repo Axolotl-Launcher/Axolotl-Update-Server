@@ -29,7 +29,7 @@ statistics and GitHub/CNB Releases are retained. Apply migrations through
 retry behavior, legacy webhook IDs and immutable CDN cache considerations.
 
 * `GET /api/health`, `GET /api/versions`, and `GET /api/versions/<version>` expose service/version data.
-* `GET /api/admin/stats?start=<ISO-8601>&end=<ISO-8601>` (admin token required) reports API calls grouped by client/request `version` and `channel`, plus downloads grouped by artifact `version`, `platform`, and `channel`, with count and bytes for a range of at most 30 days. Calls to `/latest` use `X-Axolotl-Version` as the client version; versioned API paths use their path version. The default range is the previous 24 hours. Requests served entirely by Caddy's static `/dist` handler do not pass through Flask; aggregate Caddy access logs separately for production-wide static-download metrics. Flask's `/dist` fallback requests are included automatically.
+* Usage collection is disabled: API/update checks and file downloads do not insert statistics or commit a per-request database transaction. `GET /api/admin/stats` remains a read-only legacy endpoint for old data; run `flask --app wsgi:app purge-usage` to delete history and compact SQLite.
 * Upload with `PUT /api/artifacts/<version>/<filename>` and `X-Upload-Token`. The body is hashed server-side and stored below `DIST_ROOT/<version>/` (with the default `DIST_ROOT=./dist`, this is `./dist/<version>/`).
   Package metadata is supplied with `X-Axolotl-Platform` (`windows`, `macos`, `linux` or an updater platform), `X-Axolotl-Architecture` (`x86_64`, `aarch64`, `universal`), `X-Axolotl-Kind` (`updater`, `installer`, `portable`, `signature`, `manifest`, `other`), optional `X-Axolotl-Variant`, and `X-Axolotl-Display-Name`. Existing uploads default to `kind=updater` for compatibility.
 * Publish with `POST /api/webhook/release`. The normal GitHub Actions flow first publishes the GitHub Release, then sends a small HMAC-authenticated payload. The server validates the public GitHub metadata and catalog, streams every catalog file (including `.sig`) to `DIST_ROOT/<version>/`, validates SHA-256 and size, then publishes atomically. The workflow must not upload large files through `/api/artifacts/*` and does not need `UPLOAD_TOKEN`.
@@ -87,11 +87,10 @@ Keep Gunicorn bound to loopback. Docker/extra proxies need an explicit
 comma-separated `TRUSTED_PROXY_CIDRS` containing only their actual addresses;
 setting it empty disables forwarded-IP handling. It replaces the default list.
 
-The updated `Caddyfile.example` trusts Cloudflare ranges, reads
-`CF-Connecting-IP`, and replaces upstream `X-Forwarded-For` with Caddy's verified
-`{client_ip}`. It removes the upstream CF header after normalization. Direct
-requests to Caddy use the socket IP. The global `servers` block must be merged
-with any existing global Caddy configuration, not added as a second global block.
+The updated `Caddyfile.example` supports older Caddy versions: it sets
+`X-Forwarded-For` to `{http.request.remote.host}` and preserves
+`CF-Connecting-IP`. Flask verifies that socket peer is a Cloudflare address
+before using the CF header. Direct requests to Caddy use the socket IP.
 Review the lists against [Cloudflare IPv4](https://www.cloudflare.com/ips-v4/)
 and [IPv6](https://www.cloudflare.com/ips-v6/) when updating deployment.
 See [Caddy trusted proxies](https://caddyserver.com/docs/caddyfile/options#trusted-proxies)
@@ -99,16 +98,16 @@ and [Cloudflare headers](https://developers.cloudflare.com/fundamentals/referenc
 Cloudflare Tunnel is a different proxy topology: configure its trusted local
 connector explicitly rather than trusting arbitrary CF headers from loopback.
 
-Every Flask response emits an INFO access record to stderr/journald:
+Only Gunicorn emits application HTTP access logs; Flask's duplicate JSON request
+logger has been removed. Its standard log line uses the real client IP:
 
 ```text
-request {"client_ip": "203.0.113.12", "proxy_peer": "127.0.0.1", "method": "GET", "path": "/latest", "status": 200, "request_id": "...", "duration_ms": 1.23}
+203.0.113.12 - - [01/Nov/2026:20:41:39 +0800] "GET /latest HTTP/1.1" 200 1455 "-" "Axolotl-Launcher/1.10.4 (windows)"
 ```
 
-The application log excludes query strings, bodies and authentication headers;
-`proxy_peer` is the original connection address. Caddy emits JSON access logs to
-stderr, including `request.client_ip` for static `/dist` traffic that bypasses
-Flask. Existing Gunicorn access logs remain enabled by the systemd unit.
+Caddy emits JSON access logs to stderr for static `/dist` traffic that bypasses
+Flask. Old Caddy versions may show the Cloudflare node IP in those separate logs.
+Gunicorn access logs remain enabled by the systemd unit.
 Historical audit rows are not rewritten because their original IP cannot be recovered.
 
 After deploying the code, merge the example's proxy settings into your Caddyfile
@@ -125,6 +124,65 @@ sudo journalctl -u caddy -f
 
 This IP/logging change adds no database migration. If updating from an older
 checkout, the existing systemd ExecStartPre runs any previously pending migrations.
+
+### Latest response cache and Cloudflare CDN
+
+`LATEST_CACHE_SECONDS=30` enables a bounded per-process cache of `/latest` results,
+including empty `204` responses. Keys contain the effective channel, platform and
+client version. Committed Version/Artifact/ChannelPointer changes invalidate the
+local cache and a shared instance-directory revision file invalidates other
+workers. Rollbacks do not publish a new revision. A value of `0` disables caching.
+
+The `200`, `204` and `304` responses all include cache policy and `Vary` for
+`X-Axolotl-Channel`, `X-Axolotl-Platform`, and `X-Axolotl-Version`. Query-only
+requests return `Cache-Control: public, max-age=0, s-maxage=30, must-revalidate`
+and `Cloudflare-CDN-Cache-Control: public, max-age=30`. Invalid requests and
+requests with Authorization/Cookie are not shared-cacheable. Caddy must forward
+these origin headers unchanged: remove its old `/latest` `header Cache-Control`
+override. The sample Caddyfile already does so.
+
+Cloudflare does not cache JSON by default and its default key does not separate
+these custom headers. `Vary` alone is insufficient for Cloudflare. To cache
+query-only requests, add a native Cache Rule limited to `/latest` **without any
+of the three variant headers**, mark it Eligible for cache, retain the full query
+string in the cache key and respect origin cache-control/TTL. Do not configure
+a blanket Cache Everything rule ignoring query strings or variant headers.
+
+Header-based clients use the origin cache by default (`private` and Cloudflare
+`no-store` prevent cross-channel/platform leakage). If your Cloudflare plan
+supports a native custom cache key, first include all three X-Axolotl headers
+and all query parameters in that key, then set
+`LATEST_CDN_HEADER_CACHE_KEY=true` and enable caching for `/latest` through a
+native Cache Rule respecting origin TTL. No Worker deployment is needed.
+See [Cloudflare cache keys](https://developers.cloudflare.com/cache/how-to/cache-keys/)
+and [default cache behavior](https://developers.cloudflare.com/cache/concepts/default-cache-behavior/).
+
+Origin invalidation is immediate after successful admin changes; CDN copies may
+remain until the short TTL expires. Purge the CDN URL for an urgent revocation.
+Use `CF-Cache-Status` and `Age` to verify actual edge hits; origin headers alone
+do not establish that a Cloudflare rule is active.
+
+### Delete old usage history and reclaim SQLite disk space
+
+Usage collection is disabled in code. To remove accumulated history, stop the
+service and run the maintenance command with the same environment/database as
+the service (the normal `.env` is loaded by the app):
+
+```bash
+cd /www/server/Axolotl-Update-Server
+sudo systemctl stop axolotl-update-server
+.venv/bin/flask --app wsgi:app purge-usage
+sudo systemctl start axolotl-update-server
+```
+
+`purge-usage` deletes **only UsageEvent statistics**, commits, runs SQLite VACUUM
+and truncates the WAL checkpoint. Versions, artifact records/files, webhook
+events and admin audit history remain intact. VACUUM rebuilds the database;
+allow free disk space for temporary copies (up to twice the database size).
+For a custom DATABASE_URL supplied outside `.env`, export the same value before
+invoking Flask. Stop other processes accessing the database while compacting it.
+If compaction fails, deletion is already committed and rerunning the command is
+safe. Existing migration tables/schema are retained; no new migration is required.
 
 ### Artifact retention
 
