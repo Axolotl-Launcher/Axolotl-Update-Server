@@ -3,6 +3,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .services.client_ip import DEFAULT_TRUSTED_PROXY_CIDRS
+
 load_dotenv()
 
 
@@ -21,6 +23,7 @@ class Config:
     MAX_CONTENT_LENGTH = int(os.getenv("MAX_UPLOAD_SIZE", str(512 * 1024 * 1024)))
     WEBHOOK_MAX_AGE_SECONDS = int(os.getenv("WEBHOOK_MAX_AGE_SECONDS", "300"))
     RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
+    TRUSTED_PROXY_CIDRS = os.getenv("TRUSTED_PROXY_CIDRS", ",".join(DEFAULT_TRUSTED_PROXY_CIDRS))
     RELEASE_RETENTION_COUNT = int(os.getenv("RELEASE_RETENTION_COUNT", "3"))
     BETA_RETENTION_COUNT = int(os.getenv("BETA_RETENTION_COUNT", "3"))
     GITHUB_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = int(os.getenv("GITHUB_DOWNLOAD_CONNECT_TIMEOUT_SECONDS", "10"))

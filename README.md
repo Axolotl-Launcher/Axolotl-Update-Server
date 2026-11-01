@@ -71,6 +71,61 @@ Back up both the SQLite database (`instance/update-server.db` by default) and th
 
 The built-in rate limiter is process-local and intended as a baseline safeguard. With multiple Gunicorn workers, use a shared proxy/Redis limiter for consistent enforcement.
 
+### Cloudflare client IP and access logs
+
+The normal request path is client -> Cloudflare -> Caddy -> Gunicorn. The app
+resolves `request.remote_addr` through trusted proxy addresses before Flask runs,
+so admin audit records and rate limiting use the client IP. Gunicorn's existing
+`%(h)s` access-log field also uses this resolved address.
+
+The default trusted networks are `127.0.0.1/32`, `::1/128`, and the official
+Cloudflare IPv4/IPv6 ranges. `X-Forwarded-For` is read from right to left, stopping
+at the first untrusted address. `CF-Connecting-IP` is used only when a Cloudflare
+hop has been verified in that trusted chain. Invalid chains fall back to the
+connection IP; a direct internet request cannot select an IP using these headers.
+Keep Gunicorn bound to loopback. Docker/extra proxies need an explicit
+comma-separated `TRUSTED_PROXY_CIDRS` containing only their actual addresses;
+setting it empty disables forwarded-IP handling. It replaces the default list.
+
+The updated `Caddyfile.example` trusts Cloudflare ranges, reads
+`CF-Connecting-IP`, and replaces upstream `X-Forwarded-For` with Caddy's verified
+`{client_ip}`. It removes the upstream CF header after normalization. Direct
+requests to Caddy use the socket IP. The global `servers` block must be merged
+with any existing global Caddy configuration, not added as a second global block.
+Review the lists against [Cloudflare IPv4](https://www.cloudflare.com/ips-v4/)
+and [IPv6](https://www.cloudflare.com/ips-v6/) when updating deployment.
+See [Caddy trusted proxies](https://caddyserver.com/docs/caddyfile/options#trusted-proxies)
+and [Cloudflare headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
+Cloudflare Tunnel is a different proxy topology: configure its trusted local
+connector explicitly rather than trusting arbitrary CF headers from loopback.
+
+Every Flask response emits an INFO access record to stderr/journald:
+
+```text
+request {"client_ip": "203.0.113.12", "proxy_peer": "127.0.0.1", "method": "GET", "path": "/latest", "status": 200, "request_id": "...", "duration_ms": 1.23}
+```
+
+The application log excludes query strings, bodies and authentication headers;
+`proxy_peer` is the original connection address. Caddy emits JSON access logs to
+stderr, including `request.client_ip` for static `/dist` traffic that bypasses
+Flask. Existing Gunicorn access logs remain enabled by the systemd unit.
+Historical audit rows are not rewritten because their original IP cannot be recovered.
+
+After deploying the code, merge the example's proxy settings into your Caddyfile
+and validate before reload:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy
+sudo systemctl restart axolotl-update-server
+sudo journalctl -u axolotl-update-server -f
+# Static file requests:
+sudo journalctl -u caddy -f
+```
+
+This IP/logging change adds no database migration. If updating from an older
+checkout, the existing systemd ExecStartPre runs any previously pending migrations.
+
 ### Artifact retention
 
 To limit disk usage, a successful release webhook prunes published version directories after the database transaction completes. By default, `RELEASE_RETENTION_COUNT=3` and `BETA_RETENTION_COUNT=3`; the retained set is the union of the newest three stable Release versions and newest three Beta prerelease versions. Database version and artifact metadata is preserved, while removed files are no longer eligible for `/latest` or `/api/downloads/*`. Configure the counts with environment variables when a different retention window is required. Draft/uploading versions and non-version directories are not removed.

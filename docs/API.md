@@ -492,7 +492,7 @@ Returns revoke and restore audit records:
       "version": "1.9.4",
       "reason": "Critical regression",
       "request_id": "...",
-      "ip_address": "127.0.0.1",
+      "ip_address": "203.0.113.12",
       "created_at": "2026-09-05T12:00:00+00:00"
     }
   ]
@@ -545,6 +545,13 @@ Example:
 
 ## Operational Notes
 
+- Admin audit `ip_address`, rate limiting and application/Gunicorn access logs use
+  the resolved client IP behind trusted Cloudflare/Caddy proxies. Forwarded
+  headers from untrusted socket peers are ignored. Configure
+  `TRUSTED_PROXY_CIDRS` for a different proxy topology; see README's Cloudflare
+  deployment instructions. Application access records include `client_ip`,
+  `proxy_peer`, method, path, status, request ID and duration; Caddy's JSON access
+  logs include static requests. Historical audit IPs remain unchanged.
 - Caddy serves existing `/dist` files directly, so those static hits do not enter Flask usage logging. Use Caddy access logs for complete production download statistics.
 - Flask fallback `/dist` requests are recorded in the application usage table.
 - Apply database migrations before production startup: `flask --app wsgi:app db upgrade`.

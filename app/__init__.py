@@ -1,3 +1,5 @@
+import json
+import logging
 from collections import defaultdict, deque
 from pathlib import Path
 from time import monotonic
@@ -7,11 +9,18 @@ from flask import Flask, request
 
 from .config import Config
 from .extensions import db, migrate
+from .services.client_ip import DEFAULT_TRUSTED_PROXY_CIDRS, ClientIPMiddleware
 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_object)
+    trusted_proxies = app.config.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)
+    if isinstance(trusted_proxies, str):
+        trusted_proxies = trusted_proxies.split(",")
+    app.wsgi_app = ClientIPMiddleware(app.wsgi_app, trusted_proxies)  # type: ignore[method-assign]
+    app.logger.setLevel(logging.INFO)
+    app.logger.disabled = False
     if app.config.get("FLASK_ENV") == "production":
         required = ("SECRET_KEY", "WEBHOOK_SECRET", "ADMIN_TOKEN")
         if any(not app.config.get(name) or app.config.get(name) == "dev-only-change-me" for name in required):
@@ -29,6 +38,10 @@ def create_app(config_object: type[Config] = Config) -> Flask:
         import uuid
 
         from flask import g
+        rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        g.request_id = rid
+        request.environ["request_id"] = rid
+        g.request_started = monotonic()
         if request.path.startswith("/api/"):
             bucket = request_buckets[request.remote_addr or "unknown"]
             now = monotonic()
@@ -38,9 +51,6 @@ def create_app(config_object: type[Config] = Config) -> Flask:
                 from .errors import ApiError
                 raise ApiError("rate_limited", "Too many requests; retry later.", 429)
             bucket.append(now)
-        rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        g.request_id = rid
-        request.environ["request_id"] = rid
 
     @app.after_request
     def record_usage(response):
@@ -87,6 +97,18 @@ def create_app(config_object: type[Config] = Config) -> Flask:
     def add_request_id(response):
         from flask import g
         response.headers["X-Request-ID"] = g.request_id
+        return response
+
+    @app.after_request
+    def access_log(response):
+        from flask import g
+        app.logger.info("request %s", json.dumps({
+            "client_ip": request.remote_addr,
+            "proxy_peer": request.environ.get("axolotl.proxy_peer"),
+            "method": request.method, "path": request.path,
+            "status": response.status_code, "request_id": getattr(g, "request_id", ""),
+            "duration_ms": round((monotonic() - getattr(g, "request_started", monotonic())) * 1000, 2),
+        }, ensure_ascii=True))
         return response
 
     from .routes import api_bp, latest_bp
