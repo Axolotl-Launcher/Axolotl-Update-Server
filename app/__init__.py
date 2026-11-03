@@ -52,6 +52,15 @@ def create_app(config_object: type[Config] = Config) -> Flask:
             bucket.append(now)
 
     @app.after_request
+    def allow_public_download_catalog(response):
+        if request.path.startswith("/api/downloads/") and request.method in {"GET", "HEAD", "OPTIONS"}:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            response.headers["Access-Control-Expose-Headers"] = "ETag, X-Request-ID"
+        return response
+
+    @app.after_request
     def add_request_id(response):
         from flask import g
         response.headers["X-Request-ID"] = g.request_id

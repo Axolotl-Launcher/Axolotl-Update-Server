@@ -160,6 +160,12 @@ Returns one version in the same structure as an item from `/api/versions`. Unkno
 
 Returns the newest complete package version for a channel.
 
+Both download catalog endpoints support cross-origin `GET`, `HEAD`, and `OPTIONS`
+with `Access-Control-Allow-Origin: *`, including empty and error responses. No
+cross-origin credentials are allowed. Cloudflare challenge/WAF rules must allow
+these public catalog requests to reach Flask; an edge challenge response cannot
+be fixed by the application CORS headers.
+
 Query parameters:
 
 | Parameter | Default | Description |
