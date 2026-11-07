@@ -6,6 +6,7 @@ from semver import Version as SemVersion
 
 from ..errors import ApiError
 from ..models import Version
+from .artifact_storage import metadata_only
 from .version_lock import version_lock
 
 
@@ -42,7 +43,7 @@ def prune_dist(retention_release: int = 3, retention_beta: int = 3) -> list[str]
         except ValueError:
             continue
         record = Version.query.filter_by(version=str(version), status="published").first()
-        if record and record.version not in retained:
+        if record and not metadata_only(record) and record.version not in retained:
             target = version_dir.resolve()
             if root not in target.parents:
                 continue

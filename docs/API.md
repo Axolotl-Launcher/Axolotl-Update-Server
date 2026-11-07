@@ -64,6 +64,10 @@ Behavior:
 - `beta` returns the highest published stable Release or published beta prerelease.
 - Revoked, uploading, draft, invalid, or incomplete versions are excluded.
 - Only `kind=updater` artifacts with a non-empty Tauri signature are returned.
+- New stable Release imports use metadata-only storage and do not require local
+  package files for selection. Beta and legacy local versions still require
+  local file availability. Release response URLs keep their `/dist` paths;
+  configuring delivery of those files is a separate deployment task.
 - An updater can advertise multiple `targetPlatforms`; universal macOS updater artifacts are returned for both
   `darwin-aarch64` and `darwin-x86_64`.
 - When no compatible update exists, the response is `204 No Content`.
@@ -105,9 +109,9 @@ Example response:
 
 Downloads an updater package, installer, portable package, `.sig` file, or `manifest.json`.
 
-The development Flask fallback supports `GET`, `HEAD`, conditional requests, and Range requests. In production, Caddy serves existing files directly with immutable caching.
+The development Flask fallback supports `GET`, `HEAD`, conditional requests, and Range requests. In production, Caddy serves existing files directly with immutable caching. New metadata-only Release imports create only `manifest.json` under this path. The Flask fallback returns `404` for their absent payload/signature assets and never redirects them to GitHub; external delivery is configured separately.
 
-When the artifact belongs to a GitHub-imported published version that has been removed by retention (newest three Release plus newest three Beta versions are retained), Flask returns:
+For legacy local releases and Beta only, when a GitHub-imported published version has been removed by retention, Flask returns:
 
 ```http
 302 Found
@@ -217,7 +221,7 @@ No matching package version returns `204 No Content` for the `latest` endpoint.
 
 ### `PUT /api/artifacts/<version>/<filename>`
 
-Uploads one artifact for local or administrator maintenance. The normal GitHub Release workflow must not use this endpoint for large files.
+Uploads one prerelease artifact for local or administrator maintenance. Stable versions return `409 release_metadata_only` before reading/storing package data. The normal GitHub Release workflow must not use this endpoint for large files.
 
 Required headers:
 
@@ -252,7 +256,7 @@ The request body is streamed to a temporary file. The server computes SHA-256 an
 
 ### `POST /api/webhook/release`
 
-The Launcher workflow publishes a public GitHub Release first, then sends this lightweight webhook. The server validates metadata, streams all catalog files from GitHub, validates hashes and sizes, writes artifact records and a manifest, and only then publishes the version and channel pointer.
+The Launcher workflow publishes a public GitHub Release first, then sends this lightweight webhook. For `channel=release`, the server validates all catalog/asset metadata without downloading packages, temporarily fetches only updater signatures (64 KiB limit), and writes artifact metadata plus a local manifest before publishing. Signature temporary files are deleted after success/failure. For `channel=beta`, all physical files are still streamed and hash/size verified before publishing.
 
 Required headers:
 
@@ -318,7 +322,13 @@ Validation rules:
 - `release` channel requires stable SemVer; `beta` channel requires a prerelease.
 - Every `catalog.files` entry must match one unique GitHub asset by filename, size, SHA-256 digest, and exact download URL.
 - Only HTTPS URLs for `github.com/Axolotl-Launcher/Axolotl/releases/download/<tag>/<filename>` are accepted.
-- The server streams every physical file, including `.sig`, with size limits, timeout, retry, hash verification, fsync, and atomic rename.
+- Release main package hashes/sizes are validated against the signed webhook's
+  GitHub asset metadata; bytes are not downloaded or independently rehashed.
+  Updater signatures are fetched privately, hash/size checked and stored as text
+  in the database, with no permanent `.sig` under `/dist`. Installers' `.sig`
+  attachments are cataloged without downloading their content.
+- Beta streams every physical file, including `.sig`, with size limits,
+  timeout, retry, hash verification, fsync, and atomic rename.
 - `catalog.artifacts` contains main `updater`, `installer`, and `portable` entries only. Signature-only physical files are stored separately as private `kind=signature` rows.
 - Updater artifacts may provide `targetPlatforms`, an optional non-empty array of updater platform identifiers. The
   primary `platform` must be present in the list, and effective target platforms must not overlap between updater
@@ -485,7 +495,7 @@ Response:
 
 ### `POST /api/admin/versions/<version>/restore`
 
-Restores a revoked version after verifying local artifact integrity. Updater artifacts must still have a valid Tauri signature.
+Restores a revoked version after verifying local artifact integrity for Beta/legacy local versions, or stored artifact metadata for metadata-only Release versions. Updater artifacts must still have a non-empty Tauri signature. Restoring does not download Release payloads.
 
 Response:
 
@@ -567,6 +577,11 @@ platform and channel for downloads. No new rows are collected.
 
 ## Operational Notes
 
+- Migration `0009_version_artifact_storage` adds the storage mode. Existing
+  versions remain `local` with files untouched; new stable webhook imports use
+  `metadata`. New Release manifests are retained beyond the three-version
+  physical-file window. Force Update, revoke/restore and delete still work on
+  metadata-only versions. No new Release asset redirects are introduced.
 - Admin audit `ip_address`, rate limiting and Gunicorn access logs use
   the resolved client IP behind trusted Cloudflare/Caddy proxies. Forwarded
   headers from untrusted socket peers are ignored. Configure

@@ -12,6 +12,7 @@ class Version(db.Model):
     version = db.Column(db.String(64), unique=True, nullable=False, index=True)
     channel = db.Column(db.String(16), nullable=False, index=True)
     status = db.Column(db.String(16), nullable=False, default="draft", index=True)
+    artifact_storage = db.Column(db.String(16), nullable=False, default="local", server_default="local")
     notes = db.Column(db.Text, default="")
     release_tag = db.Column(db.String(128), default="")
     release_id = db.Column(db.String(128), default="")

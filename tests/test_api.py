@@ -52,13 +52,13 @@ def configure_downloads(app, bodies, version="1.9.4"):
     app.config["GITHUB_DOWNLOAD_OPEN"] = lambda url, _timeout: io.BytesIO(urls[url])
 
 
-def test_health_and_stream_import(client, app):
+def test_health_and_metadata_release_import(client, app):
     assert client.get("/api/health").status_code == 200
     bodies = {"update.tar.gz": b"update", "update.tar.gz.sig": b"tauri-signature\n", "installer.exe": b"installer"}
     configure_downloads(app, bodies)
     assert signed_post(client, payload_for(bodies)).status_code == 200
     assert client.get("/latest?platform=linux-x86_64").json["version"] == "1.9.4"
-    assert Path(app.config["DIST_ROOT"], "1.9.4", "update.tar.gz").read_bytes() == b"update"
+    assert {path.name for path in Path(app.config["DIST_ROOT"], "1.9.4").iterdir()} == {"manifest.json"}
     assert client.get("/api/downloads/1.9.4").json["downloads"][0]["kind"] == "installer"
 
 

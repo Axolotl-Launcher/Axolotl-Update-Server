@@ -52,8 +52,10 @@ def _open_stream(url: str):
     return client.open(Request(url, headers={"User-Agent": "Axolotl-Update-Server"}), timeout=timeout)
 
 
-def download_file(url: str, destination: Path, expected_size: int, expected_sha256: str) -> None:
+def download_file(url: str, destination: Path, expected_size: int, expected_sha256: str, max_size: int | None = None) -> None:
     maximum = current_app.config["GITHUB_DOWNLOAD_MAX_SIZE"]
+    if max_size is not None:
+        maximum = min(maximum, max_size)
     if expected_size < 0 or expected_size > maximum:
         raise ApiError("github_asset_too_large", "GitHub asset exceeds the configured download limit.")
     retries = current_app.config["GITHUB_DOWNLOAD_RETRIES"]
@@ -102,10 +104,14 @@ def prepare_catalog(release: dict[str, Any], catalog: dict[str, Any], version: s
         if not isinstance(file_info, dict) or not isinstance(file_info.get("filename"), str):
             raise ApiError("invalid_catalog", "Every catalog file needs a filename.")
         filename = file_info["filename"]
+        if not filename or "/" in filename or "\\" in filename or ".." in filename or any(ord(c) < 32 for c in filename):
+            raise ApiError("invalid_filename", "Filename must be a single safe path component.")
         asset = assets.get(filename)
         if filename in files or not asset:
             raise ApiError("invalid_catalog", "Catalog file does not match a unique GitHub asset.")
         digest = _sha256(asset.get("digest", ""))
+        if type(asset.get("size")) is not int or asset["size"] < 0 or type(file_info.get("size")) is not int:
+            raise ApiError("invalid_catalog", "Catalog and GitHub asset sizes must be non-negative integers.")
         if file_info.get("size") != asset.get("size") or file_info.get("sha256", "").lower() != digest:
             raise ApiError("github_asset_metadata_mismatch", "Catalog file metadata does not match GitHub Release.")
         url = asset.get("browser_download_url")

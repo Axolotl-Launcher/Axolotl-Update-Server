@@ -89,9 +89,10 @@ def test_deleted_version_can_be_republished_with_same_event_id(client, app):
     configure_downloads(app, bodies)
     response = signed_post(client, payload_for(bodies))
     assert response.status_code == 200 and response.json["status"] == "published"
-    assert Path(app.config["DIST_ROOT"], "1.9.4/update.tar.gz").read_bytes() == b"new package"
+    assert not Path(app.config["DIST_ROOT"], "1.9.4/update.tar.gz").exists()
     with app.app_context():
         assert WebhookEvent.query.one().version == "1.9.4"
+        assert Artifact.query.filter_by(filename="update.tar.gz").one().sha256 == hashlib.sha256(b"new package").hexdigest()
 
 
 def test_delete_requires_auth_and_valid_metadata(client, versions):

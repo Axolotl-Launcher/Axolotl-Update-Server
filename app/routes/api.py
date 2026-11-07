@@ -24,6 +24,7 @@ from ..models import (
     artifact_platforms,
     utcnow,
 )
+from ..services.artifact_storage import artifact_available, metadata_only
 from ..services.delete_version import delete_version, ensure_cleanup_complete
 from ..services.force_update import set_force_update
 from ..services.github_release import download_file, prepare_catalog
@@ -84,10 +85,7 @@ def pointer_candidate(channel: str):
             bool(set(artifact_platforms(a)) & PLATFORMS)
             and a.kind == "updater"
             and a.signature
-            and a.relative_path == f"dist/{v.version}/{a.filename}"
-            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
-            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
-            and hashlib.sha256((Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).read_bytes()).hexdigest() == a.sha256
+            and artifact_available(v, a, verify_hash=True)
             for a in v.artifacts
         )
     ]
@@ -117,7 +115,8 @@ def version_detail(version):
 @version_operation
 def upload_artifact(version, filename):
     require_upload_token()
-    parse_version(version)
+    if not parse_version(version).prerelease:
+        raise ApiError("release_metadata_only", "Release artifacts are registered through the webhook without local uploads.", 409)
     ensure_cleanup_complete(version)
     validate_filename(filename)
     platform = request.headers.get("X-Axolotl-Platform", "")
@@ -241,9 +240,7 @@ def download_payload(v: Version, include_updater: bool = False):
         if a.is_public
         and a.kind != "signature"
         and (include_updater or a.kind != "updater")
-        and a.relative_path == f"dist/{v.version}/{a.filename}"
-        and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
-        and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
+        and artifact_available(v, a)
     ]
     artifacts.sort(key=lambda a: (platform_order.get(a.platform, 99), kind_order.get(a.kind, 99), a.sort_order, a.display_name or a.filename))
     return {"version": v.version, "channel": v.channel, "status": v.status, "published_at": v.published_at.isoformat().replace("+00:00", "Z") if v.published_at else None, "force_update": bool(v.force_update), "downloads": [download_json(a) for a in artifacts]}
@@ -256,9 +253,7 @@ def select_download_version(channel: str, include_updater: bool = False):
         if v.published_at is not None
         and any(
             a.is_public and a.kind in allowed
-            and a.relative_path == f"dist/{v.version}/{a.filename}"
-            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).is_file()
-            and (Path(current_app.config["DIST_ROOT"]) / v.version / a.filename).stat().st_size == a.size
+            and artifact_available(v, a)
             for a in v.artifacts
         )
     ]
@@ -347,6 +342,7 @@ def release_webhook():
     manifest_path = None
     manifest_temp = None
     manifest_written = False
+    signature_staging = None
     try:
         version = payload.get("version", "")
         tag = payload.get("tag", "")
@@ -415,14 +411,31 @@ def release_webhook():
         v = existing_version or Version(version=version, channel=channel, status="uploading")
         v.channel, v.notes, v.release_tag, v.release_id = channel, release.get("body", ""), tag, str(release["id"])
         v.force_update, v.published_at, v.status = bool(payload.get("force_update", False)), published_at, "uploading"
+        v.artifact_storage = "metadata" if channel == "release" else "local"
         db.session.add(v)
         db.session.flush()
 
-        staging = Path(current_app.config["DIST_ROOT"]) / ".staging" / event_id
-        staging.mkdir(parents=True, exist_ok=True)
-        for filename, info in files.items():
-            validate_filename(filename)
-            download_file(info["url"], staging / filename, info["size"], info["sha256"])
+        if metadata_only(v):
+            # Fetch only updater signatures into private temporary storage.
+            # No release package bytes or signature files enter DIST_ROOT.
+            signature_staging = tempfile.TemporaryDirectory(prefix="axolotl-signatures-")
+            staging = Path(signature_staging.name)
+            signature_files = set()
+            for artifact in artifacts:
+                if isinstance(artifact, dict) and artifact.get("kind", "updater") == "updater":
+                    name = artifact.get("signatureFilename") or artifact.get("signature_filename")
+                    if not isinstance(name, str) or name not in files or name != f"{artifact.get('filename')}.sig":
+                        raise ApiError("missing_signature", "Updater artifacts require their corresponding .sig file.")
+                    signature_files.add(name)
+            for filename in signature_files:
+                info = files[filename]
+                download_file(info["url"], staging / filename, info["size"], info["sha256"], max_size=65536)
+        else:
+            staging = Path(current_app.config["DIST_ROOT"]) / ".staging" / event_id
+            staging.mkdir(parents=True, exist_ok=True)
+            for filename, info in files.items():
+                validate_filename(filename)
+                download_file(info["url"], staging / filename, info["size"], info["sha256"])
 
         by_filename = {a.get("filename"): a for a in artifacts if isinstance(a, dict)}
         if len(by_filename) != len(artifacts):
@@ -482,7 +495,7 @@ def release_webhook():
         # Move only validated downloads into the public version directory.
         version_dir = Path(current_app.config["DIST_ROOT"]) / version
         version_dir.mkdir(parents=True, exist_ok=True)
-        for filename in files:
+        for filename in ([] if metadata_only(v) else files):
             destination = version_dir / filename
             if destination.exists():
                 if destination.stat().st_size != files[filename]["size"] or hashlib.sha256(destination.read_bytes()).hexdigest() != files[filename]["sha256"]:
@@ -589,6 +602,9 @@ def release_webhook():
         event.status, event.error_message = "failed", "Webhook validation or publication failed."
         db.session.add(event); db.session.commit()
         raise ApiError("webhook_failed", "Webhook validation or publication failed.") from exc
+    finally:
+        if signature_staging:
+            signature_staging.cleanup()
 
 
 def _admin_change(version, restore=False):
@@ -598,8 +614,7 @@ def _admin_change(version, restore=False):
     body = request.get_json(silent=True) or {}; operator = body.get("operator", "admin"); reason = body.get("reason", "")
     if restore:
         for a in v.artifacts:
-            path = Path(current_app.config["DIST_ROOT"]) / version / a.filename
-            if not path.exists() or path.stat().st_size != a.size or hashlib.sha256(path.read_bytes()).hexdigest() != a.sha256 or (a.kind == "updater" and not a.signature):
+            if not artifact_available(v, a, verify_hash=True) or (a.kind == "updater" and not a.signature):
                 raise ApiError("artifact_validation_failed", "Cannot restore with incomplete artifacts.")
         v.status, v.revoked_at, v.revoke_reason = "published", None, None
         action = "restore"

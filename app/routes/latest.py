@@ -8,6 +8,8 @@ from semver import Version as SemVersion
 
 from ..errors import ApiError
 from ..models import Artifact, Version, artifact_platforms, utcnow
+from ..services.artifact_storage import artifact_available as stored_artifact_available
+from ..services.artifact_storage import metadata_only
 from ..services.github_release import github_asset_url
 from ..services.retention import retained_versions
 from ..services.updater_manifest import updater_manifest_platforms
@@ -29,8 +31,7 @@ def artifact_available(version, platform):
             or not artifact.signature
         ):
             continue
-        path = Path(current_app.config["DIST_ROOT"]) / version.version / artifact.filename
-        if path.is_file() and path.stat().st_size == artifact.size:
+        if stored_artifact_available(version, artifact):
             return True
     return False
 
@@ -142,6 +143,7 @@ def dist_file(version, filename):
         ).first()
         if (
             artifact
+            and not metadata_only(artifact.version_ref)
             and artifact.version_ref.version not in retained_versions()
             and artifact.version_ref.release_tag == f"v{version}"
             and artifact.version_ref.release_id
