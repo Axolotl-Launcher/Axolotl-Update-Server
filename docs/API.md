@@ -64,9 +64,9 @@ Behavior:
 - `beta` returns the highest published stable Release or published beta prerelease.
 - Revoked, uploading, draft, invalid, or incomplete versions are excluded.
 - Only `kind=updater` artifacts with a non-empty Tauri signature are returned.
-- New stable Release imports use metadata-only storage and do not require local
-  package files for selection. Beta and legacy local versions still require
-  local file availability. Release response URLs keep their `/dist` paths;
+- New Release and Beta imports use metadata-only storage and do not require local
+  package files for selection. Unconverted legacy versions still require
+  local file availability. Response URLs keep their `/dist` paths;
   configuring delivery of those files is a separate deployment task.
 - An updater can advertise multiple `targetPlatforms`; universal macOS updater artifacts are returned for both
   `darwin-aarch64` and `darwin-x86_64`.
@@ -109,9 +109,9 @@ Example response:
 
 Downloads an updater package, installer, portable package, `.sig` file, or `manifest.json`.
 
-The development Flask fallback supports `GET`, `HEAD`, conditional requests, and Range requests. In production, Caddy serves existing files directly with immutable caching. New metadata-only Release imports create only `manifest.json` under this path. The Flask fallback returns `404` for their absent payload/signature assets and never redirects them to GitHub; external delivery is configured separately.
+The development Flask fallback supports `GET`, `HEAD`, conditional requests, and Range requests. In production, Caddy serves existing files directly with immutable caching. New metadata-only Release and Beta imports create only `manifest.json` under this path. The Flask fallback returns `404` for their absent payload/signature assets and never redirects them to GitHub; external delivery is configured separately.
 
-For legacy local releases and Beta only, when a GitHub-imported published version has been removed by retention, Flask returns:
+For unconverted legacy local versions only, when a GitHub-imported published version has been removed by retention, Flask returns:
 
 ```http
 302 Found
@@ -221,42 +221,24 @@ No matching package version returns `204 No Content` for the `latest` endpoint.
 
 ### `PUT /api/artifacts/<version>/<filename>`
 
-Uploads one prerelease artifact for local or administrator maintenance. Stable versions return `409 release_metadata_only` before reading/storing package data. The normal GitHub Release workflow must not use this endpoint for large files.
+This endpoint is retired for both Release and Beta. After checking the upload
+token and SemVer, it returns `409 release_metadata_only` without reading/storing
+package bytes. Use the release webhook for metadata publication.
 
 Required headers:
 
 ```http
 X-Upload-Token: <UPLOAD_TOKEN>
-X-Axolotl-Platform: windows | macos | linux | <updater-platform>
-X-Axolotl-Architecture: x86_64 | aarch64 | universal
 ```
 
-Optional headers:
-
-```http
-X-Axolotl-Kind: updater | installer | portable | signature | manifest | other
-X-Axolotl-Variant: modern
-X-Axolotl-Display-Name: Windows x64 Modern Installer
-X-Axolotl-Public: true | false
-X-Axolotl-SHA256: <expected-sha256>
-X-Axolotl-Size: <expected-byte-count>
-X-Axolotl-Signature: <tauri-signature>
-Content-Type: application/octet-stream
-```
-
-The request body is streamed to a temporary file. The server computes SHA-256 and size itself, validates safe filenames, then atomically stores the file at `DIST_ROOT/<version>/<filename>`.
-
-- New upload: `201 Created`.
-- Same path and same hash/size: `200 OK` with `idempotent: true`.
-- Different content for an existing path: `409 Conflict`.
-- Empty body: `400`.
-- Exceeding `MAX_UPLOAD_SIZE`: `413`.
+Missing/invalid tokens return `401`; invalid SemVer returns `400`. Authenticated
+valid-version requests return `409 release_metadata_only` for both channels.
 
 ## GitHub Release Webhook
 
 ### `POST /api/webhook/release`
 
-The Launcher workflow publishes a public GitHub Release first, then sends this lightweight webhook. For `channel=release`, the server validates all catalog/asset metadata without downloading packages, temporarily fetches only updater signatures (64 KiB limit), and writes artifact metadata plus a local manifest before publishing. Signature temporary files are deleted after success/failure. For `channel=beta`, all physical files are still streamed and hash/size verified before publishing.
+The Launcher workflow publishes a public GitHub Release first, then sends this lightweight webhook. For both `channel=release` and `channel=beta`, the server validates all catalog/asset metadata without downloading packages, temporarily fetches only updater signatures (64 KiB limit), and writes artifact metadata plus a local manifest before publishing. Signature temporary files are deleted after success/failure.
 
 Required headers:
 
@@ -322,13 +304,11 @@ Validation rules:
 - `release` channel requires stable SemVer; `beta` channel requires a prerelease.
 - Every `catalog.files` entry must match one unique GitHub asset by filename, size, SHA-256 digest, and exact download URL.
 - Only HTTPS URLs for `github.com/Axolotl-Launcher/Axolotl/releases/download/<tag>/<filename>` are accepted.
-- Release main package hashes/sizes are validated against the signed webhook's
+- Release and Beta main package hashes/sizes are validated against the signed webhook's
   GitHub asset metadata; bytes are not downloaded or independently rehashed.
   Updater signatures are fetched privately, hash/size checked and stored as text
   in the database, with no permanent `.sig` under `/dist`. Installers' `.sig`
   attachments are cataloged without downloading their content.
-- Beta streams every physical file, including `.sig`, with size limits,
-  timeout, retry, hash verification, fsync, and atomic rename.
 - `catalog.artifacts` contains main `updater`, `installer`, and `portable` entries only. Signature-only physical files are stored separately as private `kind=signature` rows.
 - Updater artifacts may provide `targetPlatforms`, an optional non-empty array of updater platform identifiers. The
   primary `platform` must be present in the list, and effective target platforms must not overlap between updater
@@ -495,7 +475,7 @@ Response:
 
 ### `POST /api/admin/versions/<version>/restore`
 
-Restores a revoked version after verifying local artifact integrity for Beta/legacy local versions, or stored artifact metadata for metadata-only Release versions. Updater artifacts must still have a non-empty Tauri signature. Restoring does not download Release payloads.
+Restores a revoked version after verifying local artifact integrity for unconverted legacy versions, or stored artifact metadata for metadata-only Release/Beta versions. Updater artifacts must still have a non-empty Tauri signature. Restoring does not download payloads.
 
 Response:
 
@@ -578,10 +558,15 @@ platform and channel for downloads. No new rows are collected.
 ## Operational Notes
 
 - Migration `0009_version_artifact_storage` adds the storage mode. Existing
-  versions remain `local` with files untouched; new stable webhook imports use
-  `metadata`. New Release manifests are retained beyond the three-version
+  versions remain `local` with files untouched until `purge-dist-assets` runs;
+  new Release and Beta webhook imports use `metadata`. Their manifests are retained beyond the three-version
   physical-file window. Force Update, revoke/restore and delete still work on
   metadata-only versions. No new Release asset redirects are introduced.
+- To convert old Release and Beta versions and delete local packages/signature
+  files, stop the server and run `flask --app wsgi:app purge-dist-assets`.
+  `--dry-run` validates/lists without deleting; `--version <semver>` restricts
+  the scope. Metadata and manifest are kept, and partial file cleanup is safely
+  retryable. See README for deployment commands and recovery details.
 - Admin audit `ip_address`, rate limiting and Gunicorn access logs use
   the resolved client IP behind trusted Cloudflare/Caddy proxies. Forwarded
   headers from untrusted socket peers are ignored. Configure

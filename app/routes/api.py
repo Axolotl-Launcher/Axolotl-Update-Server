@@ -3,7 +3,6 @@ import json
 import mimetypes
 import os
 import re
-import secrets
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,7 +23,7 @@ from ..models import (
     artifact_platforms,
     utcnow,
 )
-from ..services.artifact_storage import artifact_available, metadata_only
+from ..services.artifact_storage import artifact_available
 from ..services.delete_version import delete_version, ensure_cleanup_complete
 from ..services.force_update import set_force_update
 from ..services.github_release import download_file, prepare_catalog
@@ -115,106 +114,8 @@ def version_detail(version):
 @version_operation
 def upload_artifact(version, filename):
     require_upload_token()
-    if not parse_version(version).prerelease:
-        raise ApiError("release_metadata_only", "Release artifacts are registered through the webhook without local uploads.", 409)
-    ensure_cleanup_complete(version)
-    validate_filename(filename)
-    platform = request.headers.get("X-Axolotl-Platform", "")
-    architecture = request.headers.get("X-Axolotl-Architecture", "") or ("aarch64" if "aarch64" in platform else "x86_64")
-    kind = request.headers.get("X-Axolotl-Kind", "updater")
-    variant = request.headers.get("X-Axolotl-Variant", "")
-    display_name = request.headers.get("X-Axolotl-Display-Name", "")
-    if kind not in ARTIFACT_KINDS:
-        raise ApiError("invalid_artifact_kind", "Artifact kind is not supported.")
-    if platform not in PLATFORMS and platform not in PACKAGE_PLATFORMS:
-        raise ApiError("invalid_artifact_platform", "Artifact platform is not supported.")
-    if architecture not in ARCHITECTURES:
-        raise ApiError("invalid_artifact_architecture", "Artifact architecture is not supported.")
-    if len(display_name) > 160 or len(variant) > 32:
-        raise ApiError("invalid_artifact_metadata", "Artifact display metadata is too long.")
-    hasher = hashlib.sha256()
-    size = 0
-    path = Path(current_app.config["DIST_ROOT"]) / version / filename
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
-        temp_name = tmp.name
-        while chunk := request.stream.read(1024 * 1024):
-            size += len(chunk)
-            if size > current_app.config["MAX_CONTENT_LENGTH"]:
-                Path(temp_name).unlink(missing_ok=True)
-                raise ApiError("payload_too_large", "Artifact exceeds the configured upload limit.", 413)
-            hasher.update(chunk)
-            tmp.write(chunk)
-    if size == 0:
-        Path(temp_name).unlink(missing_ok=True)
-        raise ApiError("empty_artifact", "Artifact body must not be empty.")
-    digest = hasher.hexdigest()
-    expected_hash = request.headers.get("X-Axolotl-SHA256")
-    expected_size = request.headers.get("X-Axolotl-Size")
-    if expected_hash and not secrets.compare_digest(expected_hash.lower(), digest):
-        Path(temp_name).unlink(missing_ok=True)
-        raise ApiError("hash_mismatch", "Uploaded content hash does not match.")
-    if expected_size:
-        try:
-            size_matches = int(expected_size) == size
-        except ValueError as exc:
-            Path(temp_name).unlink(missing_ok=True)
-            raise ApiError("invalid_size", "X-Axolotl-Size must be an integer.") from exc
-        if not size_matches:
-            Path(temp_name).unlink(missing_ok=True)
-            raise ApiError("size_mismatch", "Uploaded content size does not match.")
-    v = Version.query.filter_by(version=version).first()
-    if not v:
-        v = Version(version=version, channel="beta" if "-" in version else "release", status="uploading")
-        db.session.add(v); db.session.flush()
-    existing = Artifact.query.filter_by(relative_path=f"dist/{version}/{filename}").first()
-    if existing:
-        if existing.sha256 == digest and existing.size == size:
-            if not path.exists():
-                os.link(temp_name, path)
-            elif path.stat().st_size != size or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                Path(temp_name).unlink(missing_ok=True)
-                raise ApiError("artifact_corrupt", "The existing artifact failed integrity verification.", 409)
-            Path(temp_name).unlink(missing_ok=True)
-            return jsonify({"artifact": artifact_json(existing), "idempotent": True})
-        Path(temp_name).unlink(missing_ok=True)
-        raise ApiError("artifact_exists", "An artifact with a different hash already exists.", 409)
-    duplicate_metadata = Artifact.query.filter_by(
-        version_id=v.id, kind=kind, platform=platform, architecture=architecture, variant=variant
-    ).first()
-    if duplicate_metadata and kind != "signature":
-        Path(temp_name).unlink(missing_ok=True)
-        raise ApiError("duplicate_artifact", "Artifact metadata already exists for this version.", 409)
-    if v.status == "published":
-        Path(temp_name).unlink(missing_ok=True)
-        raise ApiError("version_immutable", "Published versions cannot receive new artifacts.", 409)
-    try:
-        os.link(temp_name, path)
-    except FileExistsError:
-        Path(temp_name).unlink(missing_ok=True)
-        raise ApiError("artifact_exists", "An artifact file already exists.", 409) from None
-    finally:
-        Path(temp_name).unlink(missing_ok=True)
-    artifact = Artifact(
-        version_id=v.id,
-        platform=platform,
-        target_platforms=[platform] if kind == "updater" and platform in PLATFORMS else None,
-        architecture=architecture,
-        kind=kind,
-        variant=variant,
-        display_name=display_name or filename,
-        is_public=request.headers.get("X-Axolotl-Public", "true").lower() == "true",
-        filename=filename,
-        relative_path=f"dist/{version}/{filename}",
-        size=size,
-        sha256=digest,
-        signature=request.headers.get("X-Axolotl-Signature"),
-        content_type=request.headers.get("Content-Type")
-        or mimetypes.guess_type(filename)[0]
-        or "application/octet-stream",
-    )
-    db.session.add(artifact); db.session.commit()
-    return jsonify({"artifact": artifact_json(artifact), "idempotent": False}), 201
+    parse_version(version)
+    raise ApiError("release_metadata_only", "Release and Beta artifacts are registered through the webhook without local uploads.", 409)
 
 
 def artifact_json(a):
@@ -338,7 +239,6 @@ def release_webhook():
         event = WebhookEvent(event_id=event_id, payload_hash=phash)
         db.session.add(event)
     staging = None
-    moved_files = []
     manifest_path = None
     manifest_temp = None
     manifest_written = False
@@ -411,31 +311,24 @@ def release_webhook():
         v = existing_version or Version(version=version, channel=channel, status="uploading")
         v.channel, v.notes, v.release_tag, v.release_id = channel, release.get("body", ""), tag, str(release["id"])
         v.force_update, v.published_at, v.status = bool(payload.get("force_update", False)), published_at, "uploading"
-        v.artifact_storage = "metadata" if channel == "release" else "local"
+        v.artifact_storage = "metadata"
         db.session.add(v)
         db.session.flush()
 
-        if metadata_only(v):
-            # Fetch only updater signatures into private temporary storage.
-            # No release package bytes or signature files enter DIST_ROOT.
-            signature_staging = tempfile.TemporaryDirectory(prefix="axolotl-signatures-")
-            staging = Path(signature_staging.name)
-            signature_files = set()
-            for artifact in artifacts:
-                if isinstance(artifact, dict) and artifact.get("kind", "updater") == "updater":
-                    name = artifact.get("signatureFilename") or artifact.get("signature_filename")
-                    if not isinstance(name, str) or name not in files or name != f"{artifact.get('filename')}.sig":
-                        raise ApiError("missing_signature", "Updater artifacts require their corresponding .sig file.")
-                    signature_files.add(name)
-            for filename in signature_files:
-                info = files[filename]
-                download_file(info["url"], staging / filename, info["size"], info["sha256"], max_size=65536)
-        else:
-            staging = Path(current_app.config["DIST_ROOT"]) / ".staging" / event_id
-            staging.mkdir(parents=True, exist_ok=True)
-            for filename, info in files.items():
-                validate_filename(filename)
-                download_file(info["url"], staging / filename, info["size"], info["sha256"])
+        # Fetch only updater signatures into private temporary storage.
+        # Neither Release nor Beta package bytes enter DIST_ROOT.
+        signature_staging = tempfile.TemporaryDirectory(prefix="axolotl-signatures-")
+        staging = Path(signature_staging.name)
+        signature_files = set()
+        for artifact in artifacts:
+            if isinstance(artifact, dict) and artifact.get("kind", "updater") == "updater":
+                name = artifact.get("signatureFilename") or artifact.get("signature_filename")
+                if not isinstance(name, str) or name not in files or name != f"{artifact.get('filename')}.sig":
+                    raise ApiError("missing_signature", "Updater artifacts require their corresponding .sig file.")
+                signature_files.add(name)
+        for filename in signature_files:
+            info = files[filename]
+            download_file(info["url"], staging / filename, info["size"], info["sha256"], max_size=65536)
 
         by_filename = {a.get("filename"): a for a in artifacts if isinstance(a, dict)}
         if len(by_filename) != len(artifacts):
@@ -492,18 +385,9 @@ def release_webhook():
             info = files[artifact_filename]
             primary_rows.append({"data": a_data, "filename": artifact_filename, "kind": kind, "platform": platform, "target_platforms": target_platforms, "architecture": architecture, "variant": variant, "signature_filename": signature_filename, "signature": tauri_signature, "info": info})
 
-        # Move only validated downloads into the public version directory.
+        # Only manifest metadata is stored in the public version directory.
         version_dir = Path(current_app.config["DIST_ROOT"]) / version
         version_dir.mkdir(parents=True, exist_ok=True)
-        for filename in ([] if metadata_only(v) else files):
-            destination = version_dir / filename
-            if destination.exists():
-                if destination.stat().st_size != files[filename]["size"] or hashlib.sha256(destination.read_bytes()).hexdigest() != files[filename]["sha256"]:
-                    raise ApiError("artifact_exists", "A stored artifact has different content.", 409)
-                (staging / filename).unlink(missing_ok=True)
-            else:
-                os.replace(staging / filename, destination)
-                moved_files.append(destination)
 
         existing_rows = {a.filename: a for a in v.artifacts}
         for row in primary_rows:
@@ -577,8 +461,6 @@ def release_webhook():
         db.session.rollback()
         if manifest_temp:
             manifest_temp.unlink(missing_ok=True)
-        for path in moved_files:
-            path.unlink(missing_ok=True)
         if manifest_written and manifest_path:
             manifest_path.unlink(missing_ok=True)
         if staging:
@@ -591,8 +473,6 @@ def release_webhook():
         db.session.rollback()
         if manifest_temp:
             manifest_temp.unlink(missing_ok=True)
-        for path in moved_files:
-            path.unlink(missing_ok=True)
         if manifest_written and manifest_path:
             manifest_path.unlink(missing_ok=True)
         if staging:

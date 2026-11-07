@@ -6,7 +6,7 @@ See the deployment and API documentation below.
 
 ## Local setup
 
-Python 3.11+ is required. Create a virtual environment, install dependencies, copy `.env.example` to `.env`, and set non-default `SECRET_KEY`, `WEBHOOK_SECRET`, and `ADMIN_TOKEN` values. `UPLOAD_TOKEN` is optional and only used for local/admin artifact maintenance.
+Python 3.11+ is required. Create a virtual environment, install dependencies, copy `.env.example` to `.env`, and set non-default `SECRET_KEY`, `WEBHOOK_SECRET`, and `ADMIN_TOKEN` values. `UPLOAD_TOKEN` is retained for the retired upload endpoint; publication uses the HMAC webhook.
 
 ```bash
 python -m venv .venv
@@ -30,9 +30,8 @@ retry behavior, legacy webhook IDs and immutable CDN cache considerations.
 
 * `GET /api/health`, `GET /api/versions`, and `GET /api/versions/<version>` expose service/version data.
 * Usage collection is disabled: API/update checks and file downloads do not insert statistics or commit a per-request database transaction. `GET /api/admin/stats` remains a read-only legacy endpoint for old data; run `flask --app wsgi:app purge-usage` to delete history and compact SQLite.
-* Upload with `PUT /api/artifacts/<version>/<filename>` and `X-Upload-Token`. The body is hashed server-side and stored below `DIST_ROOT/<version>/` (with the default `DIST_ROOT=./dist`, this is `./dist/<version>/`).
-  Package metadata is supplied with `X-Axolotl-Platform` (`windows`, `macos`, `linux` or an updater platform), `X-Axolotl-Architecture` (`x86_64`, `aarch64`, `universal`), `X-Axolotl-Kind` (`updater`, `installer`, `portable`, `signature`, `manifest`, `other`), optional `X-Axolotl-Variant`, and `X-Axolotl-Display-Name`. Existing uploads default to `kind=updater` for compatibility.
-* Publish with `POST /api/webhook/release`. The workflow publishes the public GitHub Release then sends a small HMAC-authenticated payload. New stable Release imports store catalog/asset metadata and a local manifest only: no updater, installer, portable or signature assets are persisted under `DIST_ROOT`. Only updater `.sig` contents are temporarily fetched (up to 64 KiB each), hash/size checked, decoded and stored as signatures in the database. Beta imports continue streaming and verifying every file locally. CI does not upload large files through `/api/artifacts/*` and does not need `UPLOAD_TOKEN`.
+* `PUT /api/artifacts/<version>/<filename>` is retired for both channels. After upload authentication it returns `409 release_metadata_only`; package bytes are never read or stored.
+* Publish with `POST /api/webhook/release`. The workflow publishes the public GitHub Release then sends a small HMAC-authenticated payload. Both Release and Beta imports store catalog/asset metadata and a local manifest only: no updater, installer, portable or signature assets are persisted under `DIST_ROOT`. Only updater `.sig` contents are temporarily fetched (up to 64 KiB each), hash/size checked, decoded and stored as signatures in the database. CI does not upload large files through `/api/artifacts/*` and does not need `UPLOAD_TOKEN`.
 * Check updates with `/latest`; headers `X-Axolotl-Channel`, `X-Axolotl-Platform`, and `X-Axolotl-Version` override query parameters. Release selects only stable published Release versions. Beta selects the highest compatible stable Release or published beta prerelease.
 * Browse complete public packages with `GET /api/downloads/latest?channel=release|beta` or `GET /api/downloads/<version>`. These endpoints return installer and portable artifacts with generated `/dist/<version>/...` URLs, labels, variants, sizes, and SHA-256 hashes. They intentionally exclude updater artifacts unless `include_updater=true` is supplied; they never expose signature-only attachments as packages.
 * Admin endpoints require `Authorization: Bearer <ADMIN_TOKEN>`: `POST /api/admin/versions/<version>/revoke`, `POST /api/admin/versions/<version>/restore`, `PATCH /api/admin/versions/<version>/force-update`, and `GET /api/admin/audit-logs`. The force-update endpoint accepts `{"force_update":true,"operator":"admin","reason":"Urgent fix"}` (or `false` to disable), synchronizes the local manifest, and records an audit log.
@@ -49,13 +48,12 @@ Webhook retries with the same event ID and payload hash are safe; a failed event
 
 The automatic updater and the complete package catalog are separate: `/latest` contains only signed Tauri updater artifacts, while `/api/downloads/*` is for website/manual downloads. GitHub Release and CNB Release remain publishing records and manual-download sources; Launcher automatic updates use only this Update Server.
 
-New stable releases use `Version.artifact_storage=metadata`. Their `/latest` and package catalogs retain Update Server `/dist/<version>/<filename>` URLs without requiring local payload files. Payload distribution is intentionally left to separate deployment arrangements: missing metadata-only Release assets return `404` at Flask, including after more than three releases; no new GitHub redirect behavior is added. Local manifest metadata remains available for Force Update changes. Beta and legacy local releases retain their existing file serving and old-version redirect rules.
+Both Release and Beta now use `Version.artifact_storage=metadata`. Their `/latest` and package catalogs retain Update Server `/dist/<version>/<filename>` URLs without requiring local payload files. Payload distribution is intentionally left to separate deployment arrangements: missing metadata-only assets return `404` at Flask, including after more than three versions; no new GitHub redirect behavior is added. Local manifest metadata remains available for Force Update changes. Legacy versions keep their existing behavior until explicitly converted with `purge-dist-assets`.
 
 Apply migration `0009_version_artifact_storage` before starting the new code.
 Existing versions default to `local`; the migration neither deletes their files
-nor converts their delivery behavior. Stable-version `PUT /api/artifacts/*`
-requests now return `409 release_metadata_only`; local maintenance uploads
-remain available for prereleases. Release main-package hash/size values are
+nor converts their delivery behavior. `PUT /api/artifacts/*` requests for both
+channels now return `409 release_metadata_only`. Main-package hash/size values are
 cross-checked against signed-webhook GitHub asset metadata, not recomputed from
 package bytes, because those bytes are no longer downloaded.
 
@@ -194,7 +192,40 @@ safe. Existing migration tables/schema are retained; no new migration is require
 
 ### Artifact retention
 
-For local-storage versions, successful webhooks prune old published directories after commit. Defaults remain `RELEASE_RETENTION_COUNT=3` and `BETA_RETENTION_COUNT=3`. Metadata-only Release manifests are excluded from physical retention; their update/catalog selection uses stored metadata. Legacy local releases and Beta versions still need available files to be selected. Draft/uploading versions and non-version directories are not removed.
+For legacy local-storage versions, successful webhooks prune old published directories after commit. Defaults remain `RELEASE_RETENTION_COUNT=3` and `BETA_RETENTION_COUNT=3`. Metadata-only Release and Beta manifests are excluded from physical retention; their update/catalog selection uses stored metadata. Legacy local versions still need available files until explicitly converted. Draft/uploading versions and non-version directories are not removed.
+
+### Remove existing Release and Beta packages
+
+Stop the service, apply the existing storage migration, then run the maintenance
+command against the same `.env` and database used by production:
+
+```bash
+cd /www/server/Axolotl-Update-Server
+sudo systemctl stop axolotl-update-server
+.venv/bin/flask --app wsgi:app db upgrade
+.venv/bin/flask --app wsgi:app purge-dist-assets --dry-run
+.venv/bin/flask --app wsgi:app purge-dist-assets
+sudo systemctl start axolotl-update-server
+```
+
+By default it converts all database-registered Release and Beta versions to
+metadata-only storage and removes every entry under their version directories
+except `manifest.json`. `--version 1.9.4` restricts it to one version. The command
+keeps Version/Artifact/Webhook records, status, publication date, Force Update,
+channel pointers and signatures. A missing DB updater signature can be recovered
+from its corresponding local `.sig` (64 KiB maximum) before removal. Existing
+pruned directories can be recreated with just the manifest using stored signatures.
+Missing signatures or incomplete artifact metadata stop the affected conversion
+without deleting its files. Unregistered directories are not touched.
+
+The storage-mode commit occurs before file deletion, so an interrupted cleanup
+can be rerun to remove remaining files without losing version metadata. Earlier
+versions may already be converted if a later version fails. Each conversion is
+audited as `purge_dist_assets`; database commit failures preserve the package files.
+No packages are downloaded, and converted missing `/dist` assets return `404`
+instead of falling back to GitHub. Removed package bytes can only be recovered
+from your backups or original publishing sources. This does not remove remote
+GitHub/CNB assets or purge existing CDN caches.
 
 ### systemd
 
@@ -272,8 +303,6 @@ The repository includes an idempotent baseline migration and `0002_force_update`
 ## Example calls
 
 ```bash
-curl -X PUT --data-binary @Axolotl.tar.gz -H 'X-Upload-Token: upload-secret' -H 'X-Axolotl-Platform: linux-x86_64' -H 'X-Axolotl-Signature: base64-signature' https://update.axlmc.org/api/artifacts/1.10.0-beta.1/Axolotl.tar.gz
-curl -X PUT --data-binary @Axolotl-setup.exe -H 'X-Upload-Token: upload-secret' -H 'X-Axolotl-Platform: windows' -H 'X-Axolotl-Architecture: x86_64' -H 'X-Axolotl-Kind: installer' -H 'X-Axolotl-Variant: modern' -H 'X-Axolotl-Display-Name: Windows x64 Modern Installer' https://update.axlmc.org/api/artifacts/1.10.0-beta.1/Axolotl-setup.exe
 curl -H 'X-Axolotl-Channel: release' -H 'X-Axolotl-Platform: windows-x86_64' https://update.axlmc.org/latest
 curl 'https://update.axlmc.org/api/downloads/latest?channel=release'
 curl -X POST -H 'Authorization: Bearer admin-secret' -H 'Content-Type: application/json' -d '{"reason":"regression","operator":"admin"}' https://update.axlmc.org/api/admin/versions/1.10.0/revoke

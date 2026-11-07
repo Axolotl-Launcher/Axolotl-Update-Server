@@ -273,7 +273,7 @@ def test_beta_import_from_current_github_repository(client, app):
     latest = client.get("/latest?channel=beta&platform=linux-x86_64").json
     assert latest["version"] == version
     assert latest["platforms"]["linux-x86_64"]["signature"] == "tauri-signature"
-    assert Path(app.config["DIST_ROOT"], version, "update.tar.gz").read_bytes() == b"update"
+    assert {path.name for path in Path(app.config["DIST_ROOT"], version).iterdir()} == {"manifest.json"}
     assert signed_post(client, payload).json["idempotent"] is True
 
 

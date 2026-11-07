@@ -5,7 +5,7 @@ from flask import current_app
 
 
 def metadata_only(version):
-    return version.channel == "release" and version.artifact_storage == "metadata"
+    return version.channel in ("release", "beta") and version.artifact_storage == "metadata"
 
 
 def artifact_available(version, artifact, verify_hash=False):

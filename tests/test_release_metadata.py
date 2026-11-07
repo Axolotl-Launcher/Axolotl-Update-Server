@@ -90,15 +90,15 @@ def test_release_signature_size_is_bounded_and_main_metadata_is_still_validated(
     assert signed_post(client, payload).json["error"]["code"] == "github_asset_metadata_mismatch"
 
 
-def test_beta_still_stores_every_file_and_validates_package_content(client, app):
+def test_beta_also_stores_only_metadata_and_validates_signature(client, app):
     version = "1.9.5-beta.1"
     bodies = {"update.tar.gz": b"package", "update.tar.gz.sig": b"sig", "installer.exe": b"installer"}
     configure_downloads(app, bodies, version)
     assert signed_post(client, payload_for(bodies, version=version, channel="beta")).status_code == 200
-    for name, content in bodies.items():
-        assert Path(app.config["DIST_ROOT"], version, name).read_bytes() == content
+    assert {path.name for path in Path(app.config["DIST_ROOT"], version).iterdir()} == {"manifest.json"}
+    assert client.get(f"/dist/{version}/update.tar.gz").status_code == 404
     with app.app_context():
-        assert Version.query.one().artifact_storage == "local"
+        assert Version.query.one().artifact_storage == "metadata"
 
     broken = payload_for(bodies, version="1.9.6-beta.1", channel="beta")
     app.config["GITHUB_DOWNLOAD_OPEN"] = lambda url, timeout: io.BytesIO(b"corrupt package")
@@ -131,7 +131,8 @@ def test_signature_temporary_directory_is_removed_after_success(client, app, mon
     assert directories and all(not directory.exists() for directory in directories)
 
 
-def test_manual_release_upload_is_rejected_before_storing_bytes(client, app):
-    response = client.put("/api/artifacts/1.9.4/setup.exe", headers={"X-Upload-Token": "upload"}, data=b"package")
+@pytest.mark.parametrize("version", ["1.9.4", "1.9.5-beta.1"])
+def test_manual_upload_is_rejected_before_storing_bytes(client, app, version):
+    response = client.put(f"/api/artifacts/{version}/setup.exe", headers={"X-Upload-Token": "upload"}, data=b"package")
     assert response.status_code == 409 and response.json["error"]["code"] == "release_metadata_only"
     assert list(Path(app.config["DIST_ROOT"]).iterdir()) == []
