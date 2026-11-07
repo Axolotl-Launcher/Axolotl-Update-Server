@@ -107,9 +107,35 @@ Example response:
 
 ### `GET /dist/<version>/<filename>`
 
+When `DIST_SERVER` is configured, it overrides all local-file and legacy
+GitHub fallback behavior. All `GET`/`HEAD` requests return `302 Found` to
+`DIST_SERVER/dist/<version>/<filename>`, including manifest/signature files,
+already-local assets and versions absent from the database. No DB lookup or
+origin download is performed. Example with `DIST_SERVER=https://downloads.example.com`:
+
+```http
+HTTP/1.1 302 Found
+Location: https://downloads.example.com/dist/1.9.4/setup.exe
+Cache-Control: no-store
+Cloudflare-CDN-Cache-Control: no-store
+```
+
+Query strings are retained, path components are URL-encoded, and nested asset
+paths preserve their structure. The configuration is an absolute HTTP(S) base
+URL; optional base-path prefixes are preserved and trailing slashes removed.
+Credentials/query/fragment and self-target public URLs are rejected at startup.
+Unsafe traversal/control-character request paths return `400 invalid_dist_path`;
+a same-host self-target alias returns `503 dist_server_loop`. `/latest` and package
+catalog URLs continue pointing at this Update Server's original `/dist` path.
+
+Nginx must proxy the entire `/dist/` location to Flask without `try_files` or
+static-file interception; see `deploy/nginx.example.conf`. Use `proxy_redirect off`
+and preserve origin Cache-Control. An empty/unset variable retains the following
+local/legacy fallback behavior:
+
 Downloads an updater package, installer, portable package, `.sig` file, or `manifest.json`.
 
-The development Flask fallback supports `GET`, `HEAD`, conditional requests, and Range requests. In production, Caddy serves existing files directly with immutable caching. New metadata-only Release and Beta imports create only `manifest.json` under this path. The Flask fallback returns `404` for their absent payload/signature assets and never redirects them to GitHub; external delivery is configured separately.
+The Flask local fallback supports `GET`, `HEAD`, conditional requests, and Range requests. The Nginx/Caddy examples proxy this path to Flask. New metadata-only Release and Beta imports create only `manifest.json` locally. With `DIST_SERVER` unset, the fallback returns `404` for their absent payload/signature assets and never redirects them to GitHub.
 
 For unconverted legacy local versions only, when a GitHub-imported published version has been removed by retention, Flask returns:
 
@@ -557,6 +583,9 @@ platform and channel for downloads. No new rows are collected.
 
 ## Operational Notes
 
+- `DIST_SERVER` optionally redirects all distribution requests while preserving
+  `/dist/<version>/<asset>`. Reload Nginx's all-proxy `/dist/` location and restart
+  the application after setting it. This variable needs no database migration.
 - Migration `0009_version_artifact_storage` adds the storage mode. Existing
   versions remain `local` with files untouched until `purge-dist-assets` runs;
   new Release and Beta webhook imports use `metadata`. Their manifests are retained beyond the three-version
@@ -573,8 +602,8 @@ platform and channel for downloads. No new rows are collected.
   `TRUSTED_PROXY_CIDRS` for a different proxy topology; see README's Cloudflare
   deployment instructions. Duplicate Flask JSON access logging is disabled.
   Historical audit IPs remain unchanged.
-- Caddy serves existing `/dist` files directly. Usage/database statistics are
-  disabled for both Flask API calls and download fallback requests.
+- Nginx (or the alternative Caddy example) proxies all `/dist` requests so
+  `DIST_SERVER` applies even to local files. Usage/database statistics are disabled.
 - Apply database migrations before production startup: `flask --app wsgi:app db upgrade`.
 - Migration `0008_artifact_target_platforms` backfills existing universal macOS updater artifacts to both
   `darwin-aarch64` and `darwin-x86_64` unless another updater already claims Intel macOS. Stop the old service

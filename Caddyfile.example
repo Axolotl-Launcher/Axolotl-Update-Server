@@ -28,16 +28,9 @@ http://update.axlmc.org https://update.axlmc.org {
 		# Preserve origin Cache-Control, Cloudflare-CDN-Cache-Control and Vary.
 	}
 	handle /dist/* {
-		@stored_dist_file file {path}
-		handle @stored_dist_file {
-			file_server
-			header Cache-Control "public, max-age=31536000, immutable"
-		}
-		# Missing, pruned dist files may redirect to GitHub.
-		handle {
-			reverse_proxy 127.0.0.1:8082 {
-				import client_ip_upstream
-			}
+		# Every dist request reaches Flask so DIST_SERVER also overrides local files.
+		reverse_proxy 127.0.0.1:8082 {
+			import client_ip_upstream
 		}
 	}
 }

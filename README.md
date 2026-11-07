@@ -48,7 +48,7 @@ Webhook retries with the same event ID and payload hash are safe; a failed event
 
 The automatic updater and the complete package catalog are separate: `/latest` contains only signed Tauri updater artifacts, while `/api/downloads/*` is for website/manual downloads. GitHub Release and CNB Release remain publishing records and manual-download sources; Launcher automatic updates use only this Update Server.
 
-Both Release and Beta now use `Version.artifact_storage=metadata`. Their `/latest` and package catalogs retain Update Server `/dist/<version>/<filename>` URLs without requiring local payload files. Payload distribution is intentionally left to separate deployment arrangements: missing metadata-only assets return `404` at Flask, including after more than three versions; no new GitHub redirect behavior is added. Local manifest metadata remains available for Force Update changes. Legacy versions keep their existing behavior until explicitly converted with `purge-dist-assets`.
+Both Release and Beta now use `Version.artifact_storage=metadata`. Their `/latest` and package catalogs retain Update Server `/dist/<version>/<filename>` URLs without requiring local payload files. With `DIST_SERVER` configured, every distribution request redirects to that server using the same path. With it unset, missing metadata-only assets return `404`, including after more than three versions; no new GitHub redirect behavior is added. Local manifest metadata remains available for Force Update changes. Legacy versions keep their existing behavior until explicitly converted with `purge-dist-assets`.
 
 Apply migration `0009_version_artifact_storage` before starting the new code.
 Existing versions default to `local`; the migration neither deletes their files
@@ -59,9 +59,74 @@ package bytes, because those bytes are no longer downloaded.
 
 Revoking a version removes it from `/latest` and download-directory latest selection while retaining its immutable `/dist/<version>/...` URLs for in-progress or previously published links. A separate `blocked` artifact state is intentionally not enabled yet; urgent takedowns should be handled at the Caddy/object-storage layer until that policy is introduced with an audited migration.
 
-## Caddy and production
+## Nginx and distribution server
 
-Copy `Caddyfile.example` to the Caddy configuration. It routes `/dist/*` to `/www/wwwroot/update.axlmc.org/dist`, and `/latest` plus `/api/*` to Flask on `127.0.0.1:8082`; Caddy automatically manages HTTPS certificates. Set `DIST_ROOT=/www/wwwroot/update.axlmc.org/dist` so files are stored as `/dist/<version>/...`. Run Flask behind Gunicorn:
+Set the new `.env` variable to your distribution base URL, without appending `/dist`:
+
+```dotenv
+DIST_SERVER=https://downloads.example.com
+```
+
+The application returns `302 Found` for **all** `GET`/`HEAD`
+`/dist/<version>/<asset>` requests, including local/external packages, `.sig`,
+`manifest.json`, nested asset paths and versions absent from the database:
+
+```text
+https://update.axlmc.org/dist/1.10.5-beta.1/setup.exe?download=1
+  -> https://downloads.example.com/dist/1.10.5-beta.1/setup.exe?download=1
+```
+
+The application does not fetch the target. Queries are preserved and path
+components are URL-encoded. A trailing slash in `DIST_SERVER` is removed; an
+optional base path is retained before `/dist`. Absolute HTTP(S) URLs are accepted,
+without credentials, query or fragment. A self-target matching `PUBLIC_BASE_URL`
+is rejected at startup; a same-host request alias is rejected with `503` to avoid
+a redirect loop. Redirects use `Cache-Control: no-store` and
+`Cloudflare-CDN-Cache-Control: no-store`. `/latest`, manifests and package catalog
+URLs still reference the Update Server; their URL contract is unchanged.
+An empty/unset `DIST_SERVER` preserves the existing local/legacy fallback.
+
+For the current Nginx deployment, [deploy/nginx.example.conf](deploy/nginx.example.conf)
+matches the existing HTTPS/QUIC configuration. Merge its `/dist/` block into the
+active server block. Remove `try_files`, `@dist_backend`, and the immutable
+static-file Cache-Control from that location: every `/dist/` request must reach
+Flask, including existing local files. `proxy_pass` has no URI suffix and
+`proxy_redirect off` preserves the external `Location` header:
+
+```nginx
+location ^~ /dist/ {
+    proxy_pass http://127.0.0.1:8082;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 1800s;
+    proxy_redirect off;
+    proxy_cache off;
+}
+```
+
+Keep `/api/` and `/latest` forwarding and the existing real-IP headers. The sample
+combines both HTTPS names into one `server_name`; the certificate must cover both
+names, and QUIC directives require your existing HTTP/3-capable Nginx build.
+After setting `.env` and editing Nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl restart axolotl-update-server
+curl -sS -D - -o /dev/null https://update.axlmc.org/dist/1.9.4/setup.exe
+```
+
+Expect `302` and `Location: https://downloads.example.com/dist/1.9.4/setup.exe`.
+No new database migration is needed for this variable. Existing Cloudflare/browser
+immutable file caches are not purged by this setting; invalidate old CDN entries
+when switching delivery servers.
+
+## Caddy (alternative deployment)
+
+`Caddyfile.example` is retained for older deployments. It proxies `/dist/*`, `/latest` and `/api/*` to Flask on `127.0.0.1:8082`, so `DIST_SERVER` overrides existing local files too. When `DIST_SERVER` is unset Flask serves local fallback files from `DIST_ROOT`. Set `DIST_ROOT=/www/wwwroot/update.axlmc.org/dist` for local manifest metadata. Run Flask behind Gunicorn:
 
 ```bash
 gunicorn \
@@ -223,7 +288,8 @@ can be rerun to remove remaining files without losing version metadata. Earlier
 versions may already be converted if a later version fails. Each conversion is
 audited as `purge_dist_assets`; database commit failures preserve the package files.
 No packages are downloaded, and converted missing `/dist` assets return `404`
-instead of falling back to GitHub. Removed package bytes can only be recovered
+when `DIST_SERVER` is unset, or redirect to its same-path target when configured.
+Removed package bytes can only be recovered
 from your backups or original publishing sources. This does not remove remote
 GitHub/CNB assets or purge existing CDN caches.
 

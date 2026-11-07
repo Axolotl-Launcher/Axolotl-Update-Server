@@ -10,6 +10,7 @@ from ..errors import ApiError
 from ..models import Artifact, Version, artifact_platforms, utcnow
 from ..services.artifact_storage import artifact_available as stored_artifact_available
 from ..services.artifact_storage import metadata_only
+from ..services.dist_server import dist_destination
 from ..services.github_release import github_asset_url
 from ..services.retention import retained_versions
 from ..services.updater_manifest import updater_manifest_platforms
@@ -132,7 +133,13 @@ def latest():
 
 @latest_bp.get("/dist/<version>/<path:filename>")
 def dist_file(version, filename):
-    # Development fallback; production Caddy should serve /dist directly.
+    server = current_app.config.get("DIST_SERVER", "")
+    if server:
+        response = redirect(dist_destination(server, version, filename), code=302)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"
+        return response
+    # With DIST_SERVER unset, keep the local-file/legacy fallback behavior.
     root = Path(current_app.config["DIST_ROOT"]).resolve()
     target = (root / version / filename).resolve()
     if root not in target.parents:

@@ -15,6 +15,7 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     DIST_ROOT = str(Path(os.getenv("DIST_ROOT", "./dist")).resolve())
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://update.axlmc.org").rstrip("/")
+    DIST_SERVER = os.getenv("DIST_SERVER", "")
     UPDATE_SERVER_HOST = os.getenv("UPDATE_SERVER_HOST", "127.0.0.1")
     UPDATE_SERVER_PORT = int(os.getenv("UPDATE_SERVER_PORT", "8082"))
     UPLOAD_TOKEN = os.getenv("UPLOAD_TOKEN", "")

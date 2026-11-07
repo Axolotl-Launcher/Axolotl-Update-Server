@@ -8,12 +8,16 @@ from flask import Flask, request
 from .config import Config
 from .extensions import db, migrate
 from .services.client_ip import DEFAULT_TRUSTED_PROXY_CIDRS, ClientIPMiddleware
+from .services.dist_server import normalize_dist_server
 from .services.latest_cache import LatestCache
 
 
 def create_app(config_object: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_object)
+    app.config["DIST_SERVER"] = normalize_dist_server(
+        app.config.get("DIST_SERVER", ""), app.config.get("PUBLIC_BASE_URL", Config.PUBLIC_BASE_URL),
+    )
     trusted_proxies = app.config.get("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)
     if isinstance(trusted_proxies, str):
         trusted_proxies = trusted_proxies.split(",")
