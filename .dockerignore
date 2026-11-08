@@ -8,4 +8,6 @@ instance
 *.db-wal
 *.db-shm
 coverage.out
+legacy
+artifacts
 

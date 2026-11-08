@@ -8,6 +8,8 @@ Gin 更新服务。生产使用 PostgreSQL，本地调试使用 SQLite；保留 
 
 需要 Go 1.27+ 和 C 编译器。SQLite 驱动使用 CGO：Windows 使用 MinGW/GCC，Linux 安装 `build-essential`，macOS 安装 Xcode Command Line Tools。
 
+原 Python 项目已完整归档到 `legacy/`，Go 项目位于仓库根目录。原仓库历史和五个阶段的 Go 重写提交均保留。
+
 ```powershell
 Copy-Item .env.example .env
 go build -trimpath -ldflags="-s -w" -o bin/axolotl-server.exe ./cmd/axolotl-server
@@ -17,6 +19,25 @@ go build -trimpath -ldflags="-s -w" -o bin/axolotl-server.exe ./cmd/axolotl-serv
 默认使用 `instance/update-server.db`，开发模式自动升级表结构。`.env` 不覆盖已有环境变量。健康检查：`GET http://127.0.0.1:8082/api/health`。
 
 ## 生产启动
+
+### 下载 Linux amd64 二进制
+
+GitHub Actions 的 **Build Linux amd64** 工作流在 push、pull request 时运行，也可以在 Actions 页面手动运行。成功后打开对应运行记录的 **Artifacts**，下载 `axolotl-server-linux-amd64`。
+
+产物包含静态链接的 `axolotl-server`、保留执行权限的 `axolotl-server-linux-amd64.tar.gz` 和 `SHA256SUMS`。仅构建 Linux amd64，内置 SQLite 所需 C 代码，运行时不需要安装 Go 或 GCC；HTTPS 签名下载仍需要系统 CA 证书。
+
+下载并解压 Actions 的 artifact ZIP 后，在其目录执行：
+
+```sh
+sha256sum -c SHA256SUMS
+mkdir -p bin
+tar -xzf axolotl-server-linux-amd64.tar.gz -C bin
+./bin/axolotl-server --help
+```
+
+如果直接使用 ZIP 中的原始二进制，先执行 `chmod +x axolotl-server`。首次启动仍需配置 `.env`、运行 `db migrate`，从旧服务迁移时还需导入旧 SQLite 和重建清单。
+
+### 配置与启动
 
 单实例部署，Go 进程直接提供 HTTP，Nginx/Caddy 提供 HTTPS。使用 PostgreSQL 16+，完整集成测试使用 PostgreSQL 18。生产必须设置 PostgreSQL 连接、非占位的 `ADMIN_TOKEN` 和 `WEBHOOK_SECRET`。
 

@@ -2,6 +2,8 @@
 
 新项目是独立服务，不原地改写旧库。导入读取旧 SQLite，写入新的目标库；支持已知 Alembic 0001～0009 结构，包括开发目录中实际存在的 0004。无需先让旧 Python 服务升级到最新迁移。
 
+当前仓库根目录已切换为 Go 项目，原 Python 文件统一保存在 `legacy/`。本地原目录中未提交的数据库与缓存也会随归档移入该目录；Git 不跟踪数据库。若在同一目录切换项目，旧库可能位于 `legacy/instance/update-server.db`，也应核对旧 `DATABASE_URL` 的实际位置。
+
 ## 导入内容
 
 - version、artifact、channel_pointer、webhook_event、audit_log。
