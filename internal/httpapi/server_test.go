@@ -20,19 +20,12 @@ import (
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/model"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/service"
-	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/store"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/testutil"
 )
 
 func setup(t *testing.T) (*Server, *service.Service) {
 	t.Helper()
-	s, e := store.Open("sqlite://" + filepath.Join(t.TempDir(), "test.db"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	t.Cleanup(func() { s.Close() })
-	if e = s.Migrate(context.Background()); e != nil {
-		t.Fatal(e)
-	}
+	s := testutil.Database(t)
 	c := config.Default()
 	c.Env = "test"
 	c.DistRoot = filepath.Join(t.TempDir(), "dist")

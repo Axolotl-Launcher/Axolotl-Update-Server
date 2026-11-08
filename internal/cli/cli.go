@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/analytics"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/config"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/httpapi"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/service"
@@ -20,7 +21,7 @@ import (
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
+		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | analytics maintain [--dry-run]\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
 		return e
 	}
 	c, e := config.Load()
@@ -34,6 +35,25 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	defer s.Close()
 	if args[0] == "serve" {
 		return serve(ctx, s, c)
+	}
+	if args[0] == "analytics" && len(args) >= 2 && args[1] == "maintain" {
+		flags := flag.NewFlagSet("analytics maintain", flag.ContinueOnError)
+		flags.SetOutput(out)
+		dryRun := flags.Bool("dry-run", false, "show maintenance without writing")
+		if e = flags.Parse(args[2:]); e != nil {
+			return e
+		}
+		if flags.NArg() != 0 {
+			return errors.New("unexpected maintenance arguments")
+		}
+		if e = s.CheckSchema(ctx); e != nil {
+			return e
+		}
+		report, e := (&analytics.Storage{Store: s}).Maintain(ctx, time.Now().UTC(), *dryRun)
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(out).Encode(report)
 	}
 	if args[0] == "manifests" && len(args) == 2 && args[1] == "rebuild" {
 		if e = s.CheckSchema(ctx); e != nil {
@@ -120,7 +140,48 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 			return e
 		}
 	}
-	api := httpapi.New(service.New(s, c), nil)
+	var observer httpapi.Observer
+	var collector *analytics.Collector
+	background, cancelBackground := context.WithCancel(context.Background())
+	maintenanceDone := make(chan struct{})
+	defer func() { cancelBackground(); <-maintenanceDone }()
+	if c.AnalyticsEnabled {
+		storage := &analytics.Storage{Store: s}
+		if _, e := storage.Maintain(ctx, time.Now().UTC(), false); e != nil {
+			slog.Warn("initial analytics maintenance failed; background task will retry", "error", e)
+		}
+		collector = analytics.NewCollector(storage, c.AnalyticsQueueSize, c.AnalyticsBatchSize, c.AnalyticsFlushInterval)
+		observer = collector.Observe
+		defer func() {
+			shutdown, cancel := context.WithTimeout(context.Background(), c.AnalyticsShutdownTimeout)
+			defer cancel()
+			if e := collector.Close(shutdown); e != nil {
+				slog.Warn("analytics shutdown incomplete", "error", e)
+			}
+			slog.Info("analytics final counters", "stats", collector.Stats())
+		}()
+		go func() {
+			defer close(maintenanceDone)
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-background.Done():
+					return
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(background, 30*time.Second)
+					_, e := storage.Maintain(ctx, time.Now().UTC(), false)
+					cancel()
+					if e != nil {
+						slog.Warn("analytics maintenance failed", "error", e)
+					}
+				}
+			}
+		}()
+	} else {
+		close(maintenanceDone)
+	}
+	api := httpapi.New(service.New(s, c), observer)
 	server := &http.Server{Addr: net.JoinHostPort(c.Host, c.Port), Handler: api.Router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()
