@@ -65,6 +65,7 @@ func New(s *service.Service, observer Observer) *Server {
 	r.POST("/api/admin/versions/:version/restore", v.restore)
 	r.PATCH("/api/admin/versions/:version/force-update", v.forceUpdate)
 	r.DELETE("/api/admin/versions/:version", v.deleteVersion)
+	r.POST("/api/admin/versions/:version/cleanup", v.cleanupVersion)
 	read("/api/admin/audit-logs", v.audit)
 	read("/api/admin/stats", v.statsHandler("dashboard"))
 	for _, kind := range []string{"overview", "timeseries", "breakdown", "requests", "meta", "status"} {

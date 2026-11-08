@@ -14,6 +14,40 @@ import (
 
 type AdminMeta struct{ Operator, Reason, RequestID, IP string }
 
+// Cleanup only touches a deleted version's quarantine and never deletes a live release.
+func (s *Service) Cleanup(ctx context.Context, version string, meta AdminMeta) (map[string]any, error) {
+	if e := validateAdmin(meta.Operator, meta.Reason); e != nil {
+		return nil, e
+	}
+	unlock, e := s.Lock(version)
+	if e != nil {
+		return nil, e
+	}
+	defer unlock()
+	s.commitMu.Lock()
+	defer s.commitMu.Unlock()
+	var count int64
+	if e = s.Store.DB.WithContext(ctx).Model(&model.Version{}).Where("version = ?", version).Count(&count).Error; e != nil {
+		return nil, e
+	}
+	if count > 0 {
+		return nil, domain.Err("version_exists", "Version exists; cleanup cannot delete a live release.", 409)
+	}
+	path, e := s.quarantine(version)
+	if e != nil {
+		return nil, e
+	}
+	if _, e = os.Lstat(path); e != nil && !os.IsNotExist(e) {
+		return nil, e
+	}
+	if e == nil {
+		if e = s.RemoveAll(path); e != nil {
+			return nil, domain.Err("version_cleanup_failed", "Could not remove remaining version files; retry cleanup.", 500)
+		}
+	}
+	return map[string]any{"status": "deleted", "version": version, "idempotent": true, "files_cleanup_pending": false}, nil
+}
+
 func (m AdminMeta) log(v model.Version, action string) model.AuditLog {
 	return model.AuditLog{Operator: m.Operator, Action: action, Channel: v.Channel, Version: v.Version, Reason: m.Reason, RequestID: m.RequestID, IPAddress: m.IP}
 }

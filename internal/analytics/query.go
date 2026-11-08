@@ -80,6 +80,9 @@ func ParseQuery(values url.Values, now time.Time) (Query, error) {
 			*dst = v.UTC()
 		}
 	}
+	if q.Cursor != nil && (!q.Cursor.Start.Equal(q.Start) || !q.Cursor.End.Equal(q.End)) {
+		return q, badQuery("Cursor time window has changed; start a new request.")
+	}
 	if q.End.After(now.Add(time.Minute)) {
 		return q, badQuery("end must not be in the future.")
 	}
@@ -170,9 +173,6 @@ func ParseQuery(values url.Values, now time.Time) (Query, error) {
 	}
 	if q.Cursor != nil && q.Cursor.FilterHash != q.filterHash() {
 		return q, badQuery("Cursor filters do not match this request.")
-	}
-	if q.Cursor != nil && (q.Cursor.Start != q.Start || q.Cursor.End != q.End) {
-		return q, badQuery("Cursor time window has changed or expired; start a new request.")
 	}
 	return q, nil
 }

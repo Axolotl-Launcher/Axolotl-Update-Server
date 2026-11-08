@@ -167,6 +167,25 @@ func TestRequestsPaginationAndEmptyData(t *testing.T) {
 		}
 	}
 }
+func TestCursorKeepsWindowAcrossRollingRetention(t *testing.T) {
+	now := time.Now().UTC()
+	q, e := ParseQuery(url.Values{"start": {now.Add(-14 * 24 * time.Hour).Format(time.RFC3339Nano)}}, now)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cursor := q.nextCursor(now.Add(-time.Hour), 1)
+	page, e := ParseQuery(url.Values{"cursor": {cursor}}, now.Add(5*time.Second))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !page.RetentionClamped || !page.End.Equal(q.End) || !page.Start.After(q.Start) {
+		t.Fatal(page)
+	}
+	if _, e = ParseQuery(url.Values{"cursor": {cursor}, "end": {q.End.Add(-time.Minute).Format(time.RFC3339Nano)}}, now.Add(5*time.Second)); e == nil {
+		t.Fatal("accepted changed explicit window")
+	}
+}
+
 func TestQueryValidation(t *testing.T) {
 	now := time.Now().UTC()
 	for _, raw := range []string{"start=bad", "status_code=99", "dimension=x&status_class=6xx", "client_ip=192.0.2.1%27", "asn=-1", "is_bot=1", "country=abc", "limit=0", "interval=1s", "cursor=not-base64"} {

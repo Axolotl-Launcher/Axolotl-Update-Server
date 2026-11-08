@@ -96,7 +96,7 @@ breakdown.data 为 dimension、items、total_requests、other_requests、limit�
 
 requests.data 为 items、next_cursor、has_more、limit。按 `(occurred_at,id)` 倒序，items 包含 v1 字段，以及 method、status_code、duration_ms、request_bytes、response_bytes、host、scheme、http_version、tls_version、content_type、referer_host、app_cache、error_code、ip_version、country、continent、region、city、latitude、longitude、asn、asn_org、browser、browser_version、os、os_version、device_type、is_bot。
 
-下一页传入 cursor 并保持相同过滤条件；start/end 可以省略，游标保留第一请求的窗口。窗口改变、过期或过滤条件改变返回 400，需重新分页。游标不是可靠复制水位，异步晚到数据需要重叠窗口补扫和去重。
+下一页传入 cursor 并保持相同过滤条件，省略 start/end，沿用服务器在第一页接受的窗口。14 天保留边界随时间移动时仅裁掉过期记录，不误判游标；显式修改窗口、整个窗口过期或过滤条件改变仍返回 400。游标不是可靠复制水位，异步晚到数据需要重叠窗口补扫和去重。
 
 ## 调用示例
 

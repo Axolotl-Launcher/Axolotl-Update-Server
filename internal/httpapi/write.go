@@ -107,6 +107,20 @@ func (v *Server) deleteVersion(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	v.respond(c, 200, out)
 }
+func (v *Server) cleanupVersion(c *gin.Context) {
+	meta, _, ok := v.adminBody(c, false)
+	if !ok {
+		return
+	}
+	out, e := v.Service.Cleanup(c.Request.Context(), c.Param("version"), meta)
+	if e != nil {
+		v.fail(c, e)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	v.respond(c, 200, out)
+}
+
 func (v *Server) audit(c *gin.Context) {
 	if !v.admin(c) {
 		return

@@ -155,6 +155,7 @@ X-Webhook-Signature: sha256=<HMAC-SHA256十六进制>
 | `POST /api/admin/versions/:version/restore` | 验证元数据与 updater 签名后恢复，不下载安装包 |
 | `PATCH /api/admin/versions/:version/force-update` | 必须提供 JSON 布尔 `force_update`，更新数据库和本地清单 |
 | `DELETE /api/admin/versions/:version` | 删除版本、制品、关联 Webhook 和清单目录，保留审计与请求明细 |
+| `POST /api/admin/versions/:version/cleanup` | 仅清理已删除版本的隔离文件，现存版本返回 `409 version_exists`，绝不删除其元数据 |
 | `GET /api/admin/audit-logs` | `{"logs":[...]}`，按时间倒序 |
 
 撤销/恢复返回 `{"status":"revoked或published","version":"..."}`。
@@ -162,6 +163,8 @@ X-Webhook-Signature: sha256=<HMAC-SHA256十六进制>
 强制更新返回 `version`、`status`、`force_update` 和 `idempotent`。重复设置不新增审计，不恢复撤销版本。缺清单为 `409 manifest_unavailable`，内容无效为 `409 invalid_manifest`；失败恢复原清单。
 
 删除返回 `status`、`version`、`idempotent`、`deleted_artifacts`、`deleted_webhook_events`、`channel_pointers`、`files_cleanup_pending`。文件先移到公开目录外的隔离区；提交失败移回，提交后清理失败则 `files_cleanup_pending=true`，重试 DELETE 完成清理。清理完成后再次删除返回 404。重新发布前必须完成待处理清理。
+
+管理界面的“重试清理”应使用专门的 POST cleanup 接口，不重复 DELETE：同版本号可能已被其他管理员重新发布。cleanup 使用相同版本锁，在版本存在时拒绝，版本不存在且已无隔离文件时返回幂等成功。旧 DELETE 的清理重试行为仍保留兼容。
 
 审计字段为 `operator`、`action`、`channel`、`version`、`reason`、`request_id`、`ip_address`、`created_at`。版本删除不撤回已缓存的客户端文件，也不删除远端 GitHub 或分发服务器文件。
 
