@@ -63,4 +63,4 @@ axolotl-server db verify --source /backup/update-server.db
 
 `APP_ENV` 替代 `FLASK_ENV`；移除 Flask `SECRET_KEY`、`UPLOAD_TOKEN`、安装包物理保留相关配置和大文件下载上限。保留有效的 DATABASE_URL、DIST_ROOT、PUBLIC_BASE_URL、DIST_SERVER、Webhook、管理密钥、缓存、代理和签名下载超时配置。
 
-旧 `/api/artifacts/*` 和 `/api/admin/stats` 返回 404。所有历史本地包服务及 GitHub 回退删除。外部分析程序按 `ANALYTICS.md` 使用 PostgreSQL，只读账号不受业务结构变化影响。
+旧 `/api/artifacts/*` 返回 404。`/api/admin/stats` 现为新的统计 dashboard 接口，响应结构见 `STATS_API.md`。所有历史本地包服务及 GitHub 回退删除。数据库 v1 视图保持兼容，新增 v2 视图需单独授权。

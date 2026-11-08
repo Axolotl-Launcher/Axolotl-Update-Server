@@ -119,7 +119,7 @@ func ParseQuery(values url.Values, now time.Time) (Query, error) {
 		return q, badQuery("interval must be auto, 1m, 5m, 15m, 1h, 6h or 1d.")
 	}
 	q.Seconds = seconds
-	if (q.End.Unix()-1)/seconds-q.Start.Unix()/seconds+1 > 2000 {
+	if q.End.Add(-time.Nanosecond).Unix()/seconds-q.Start.Unix()/seconds+1 > 2000 {
 		return q, badQuery("Requested interval creates more than 2000 buckets.")
 	}
 	for key := range Dimensions {
@@ -170,6 +170,9 @@ func ParseQuery(values url.Values, now time.Time) (Query, error) {
 	}
 	if q.Cursor != nil && q.Cursor.FilterHash != q.filterHash() {
 		return q, badQuery("Cursor filters do not match this request.")
+	}
+	if q.Cursor != nil && (q.Cursor.Start != q.Start || q.Cursor.End != q.End) {
+		return q, badQuery("Cursor time window has changed or expired; start a new request.")
 	}
 	return q, nil
 }

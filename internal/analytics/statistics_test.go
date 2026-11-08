@@ -68,6 +68,20 @@ func TestSeriesAndDimensions(t *testing.T) {
 	if len(points) != 4 || points[0].Requests != 2 || points[1].Requests != 1 || points[2].Requests != 2 || points[3].Requests != 1 {
 		t.Fatal(points)
 	}
+	if points[0].AverageDurationMS == nil || math.Abs(*points[0].AverageDurationMS-1.5) > 1e-8 {
+		t.Fatal("weighted bucket average", points[0])
+	}
+	countries, e := s.Breakdown(context.Background(), q, "country")
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, item := range countries.Items {
+		if item.Value != nil && *item.Value == "CN" {
+			if item.Requests != 5 || item.UniqueIPs != 2 || item.AverageDurationMS == nil || math.Abs(*item.AverageDurationMS-3) > 1e-8 || item.ClientErrors != 2 {
+				t.Fatal("weighted group metrics", item)
+			}
+		}
+	}
 	for _, dim := range DimensionNames() {
 		group, e := s.Breakdown(context.Background(), q, dim)
 		if e != nil {
@@ -82,6 +96,22 @@ func TestSeriesAndDimensions(t *testing.T) {
 		}
 		if sum != 6 {
 			t.Fatal(dim, group)
+		}
+	}
+	for i := 0; i < len(DimensionNames()); i += 8 {
+		dims := DimensionNames()[i:min(i+8, len(DimensionNames()))]
+		groups, e := s.Breakdowns(context.Background(), q, dims)
+		if e != nil {
+			t.Fatal(e)
+		}
+		for _, dim := range dims {
+			single, e := s.Breakdown(context.Background(), q, dim)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if groups[dim].TotalRequests != single.TotalRequests || len(groups[dim].Items) != len(single.Items) {
+				t.Fatal(dim, groups[dim], single)
+			}
 		}
 	}
 	q.Filters = map[string]string{"status_class": "4xx", "country": "CN"}

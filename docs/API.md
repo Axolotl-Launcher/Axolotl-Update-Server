@@ -167,5 +167,5 @@ X-Webhook-Signature: sha256=<HMAC-SHA256十六进制>
 
 ## 已移除接口
 
-`PUT /api/artifacts/*` 和 `GET /api/admin/stats` 返回 404。请求分析使用 PostgreSQL `analytics.requests_v1`；读取约定参见分析接入文档。
+`PUT /api/artifacts/*` 返回 404。`GET /api/admin/stats` 已提供新的 dashboard API，使用管理员 Bearer 认证；子接口、字段、筛选和分页详见 [统计 API v2](STATS_API.md)。它替代旧 Python 统计结构。
 

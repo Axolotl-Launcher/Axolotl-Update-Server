@@ -3,12 +3,13 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/analytics"
-	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
-	"github.com/gin-gonic/gin"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/analytics"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
+	"github.com/gin-gonic/gin"
 )
 
 func (v *Server) statsHandler(kind string) gin.HandlerFunc {
@@ -95,14 +96,7 @@ func (v *Server) statsHandler(kind string) gin.HandlerFunc {
 				points, e = v.statistics.Timeseries(ctx, q)
 			}
 			if e == nil {
-				for _, dim := range dimensions {
-					group, err := v.statistics.Breakdown(ctx, q, dim)
-					if err != nil {
-						e = err
-						break
-					}
-					groups[dim] = group
-				}
+				groups, e = v.statistics.Breakdowns(ctx, q, dimensions)
 			}
 			data = gin.H{"overview": overview, "timeseries": points, "breakdowns": groups}
 		}

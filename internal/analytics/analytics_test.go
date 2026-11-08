@@ -205,7 +205,7 @@ func BenchmarkBatchWrite(b *testing.B) {
 	}
 	events := make([]Event, 500)
 	for i := range events {
-		events[i] = Event{OccurredAt: now, UserAgent: fmt.Sprintf("Axolotl/1.9.%d windows-x86_64", i%10), Route: "/latest", ClientIP: model.Ptr("192.0.2.1"), Channel: model.Ptr("release"), ClientVersion: model.Ptr("1.9.4"), Platform: model.Ptr("windows-x86_64")}
+		events[i] = Event{OccurredAt: now.Add(-time.Duration(i) * time.Minute), UserAgent: fmt.Sprintf("Axolotl/1.9.%d windows-x86_64", i%10), Route: "/latest", ClientIP: model.Ptr(fmt.Sprintf("192.0.2.%d", i%250+1)), Channel: model.Ptr("release"), ClientVersion: model.Ptr("1.9.4"), Platform: model.Ptr("windows-x86_64"), Method: model.Ptr("GET"), StatusCode: model.Ptr(200), DurationUS: model.Ptr(int64(1000 + i*10)), RequestBytes: model.Ptr(int64(0)), ResponseBytes: model.Ptr(int64(600)), Host: model.Ptr("update.example.com"), Scheme: model.Ptr("https"), HTTPVersion: model.Ptr("HTTP/1.1"), ContentType: model.Ptr("application/json"), AppCache: model.Ptr("hit"), Country: model.Ptr("CN"), Continent: model.Ptr("AS"), ASN: model.Ptr(int64(12345)), ASNOrg: model.Ptr("Test network")}
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -225,4 +225,26 @@ func BenchmarkBatchWrite(b *testing.B) {
 	}
 	b.ReportMetric(float64(size)/float64(b.N*500), "database-bytes/event")
 	b.ReportMetric(float64(b.N*500)/b.Elapsed().Seconds(), "events/s")
+	if s.Dialect == "postgres" {
+		stats := &Statistics{Store: s}
+		if e := s.DB.Exec("ANALYZE analytics.request_events").Error; e != nil {
+			b.Fatal(e)
+		}
+		if e := s.DB.Exec("ANALYZE analytics.user_agents").Error; e != nil {
+			b.Fatal(e)
+		}
+		query := Query{Start: now.Add(-24 * time.Hour), End: now.Add(time.Second), Seconds: 3600, Interval: "1h", Limit: 20, Filters: map[string]string{}}
+		started := time.Now()
+		overview, e := stats.Overview(context.Background(), query)
+		if e != nil || overview.Requests != int64(b.N*500) {
+			b.Fatal(overview, e)
+		}
+		if _, e = stats.Timeseries(context.Background(), query); e != nil {
+			b.Fatal(e)
+		}
+		if _, e = stats.Breakdowns(context.Background(), query, []string{"route", "status_code", "country", "browser", "os", "device_type", "channel", "client_version"}); e != nil {
+			b.Fatal(e)
+		}
+		b.ReportMetric(float64(time.Since(started).Microseconds())/1000, "dashboard-ms")
+	}
 }

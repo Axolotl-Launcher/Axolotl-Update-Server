@@ -67,4 +67,23 @@ func TestPostgresReaderViewOnly(t *testing.T) {
 			t.Fatal("reader unexpectedly authorized", q)
 		}
 	}
+	if e := s.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Exec("SET LOCAL ROLE " + role).Error; e != nil {
+			return e
+		}
+		return tx.Exec("SELECT * FROM analytics.requests_v2").Error
+	}); e == nil {
+		t.Fatal("new v2 view was implicitly granted")
+	}
+	if e := s.DB.Exec("GRANT SELECT ON analytics.requests_v2 TO " + role).Error; e != nil {
+		t.Fatal(e)
+	}
+	if e := s.DB.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Exec("SET LOCAL ROLE " + role).Error; e != nil {
+			return e
+		}
+		return tx.Exec("SELECT * FROM analytics.requests_v2").Error
+	}); e != nil {
+		t.Fatal(e)
+	}
 }

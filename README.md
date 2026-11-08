@@ -2,7 +2,7 @@
 
 Gin 更新服务。生产使用 PostgreSQL，本地调试使用 SQLite；保留 Release/Beta 发布、Tauri 更新清单、下载目录及版本管理。安装包由独立 `DIST_SERVER` 分发，本机只保存清单文件。
 
-只采集到达应用的 `/latest` 和 `/api/*` 请求，明细保留 14 天。外部程序通过 PostgreSQL 只读视图分析；本项目不包含分析页面、统计 API 或长期汇总服务。
+采集到达应用的 `/latest` 和 `/api/*` 请求，明细保留 14 天，提供受管理员认证保护的统计 API：概览、时间趋势、维度分布、性能百分位、状态与流量、客户端/来源/地理信息，以及请求明细。也保留 PostgreSQL 只读视图；不包含分析页面和长期汇总。
 
 ## 本地启动
 
@@ -67,7 +67,7 @@ docker compose run --rm server db migrate
 docker compose up -d server
 ```
 
-`DOCKER_DATABASE_URL` 使用 `postgres://axolotl:编码后的密码@db:5432/axolotl?sslmode=disable`。默认不信任容器外转发的客户端 IP；按反向代理实际连接地址配置 `TRUSTED_PROXY_CIDRS`。本机 systemd 部署默认信任 loopback 和内置 Cloudflare 网段。可信代理解析同时用于统计、审计和限流。
+`DOCKER_DATABASE_URL` 使用 `postgres://axolotl:编码后的密码@db:5432/axolotl?sslmode=disable`。默认不信任容器外转发的客户端 IP；按反向代理实际连接地址配置 `TRUSTED_PROXY_CIDRS`。本机默认只信任 loopback。可信代理解析同时用于统计、审计和限流，不依赖 Cloudflare。
 
 ## 运维命令
 
@@ -87,17 +87,19 @@ axolotl-server analytics maintain
 
 ## 行为变化
 
-- 移除旧上传接口 `/api/artifacts/*` 和旧 `/api/admin/stats`，均返回 404。
+- 移除旧上传接口 `/api/artifacts/*`；`/api/admin/stats` 使用新统计 API v2 结构。
 - 移除旧本地安装包服务、GitHub 回退下载、安装包保留及转换清理命令。
 - 导入数据使用元数据判断制品可用性。`DIST_SERVER` 为空时只提供 `manifest.json`，其他 `/dist` 文件返回 404。
 - 保留本地清单、强制更新的原子替换，以及删除文件的隔离和重试。
-- 统计不保存请求原文或任意查询参数，也不保存状态码、耗时、方法和流量。
+- 统计保留查询参数白名单，记录 HTTP/性能/字节指标，但不保存请求体、认证信息、完整 URL 或任意参数。
 
 ## 文档
 
 - [HTTP API](docs/API.md)：协议、认证、发布载荷和缓存行为。
 - [旧服务迁移](docs/MIGRATION.md)：预检、导入、校验、切换与回滚。
 - [外部分析接入](docs/ANALYTICS.md)：稳定视图、白名单字段、权限和查询示例。
+- [统计 API v2](docs/STATS_API.md)：dashboard、筛选、分组、性能、地理信息和升级说明。
+- [统计 OpenAPI](docs/openapi-stats.json)：可导入 API 客户端的接口规范。
 - [验证记录](docs/VALIDATION.md)：测试方式、实际验证和容量测量。
 
 ## 开发验证

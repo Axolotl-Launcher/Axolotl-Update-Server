@@ -1,6 +1,6 @@
 # 外部 PostgreSQL 分析接入
 
-本项目只负责采集、14 天保留及数据库读取契约。分析页面、数据搬运、聚合和长期存储由外部程序负责。
+本项目提供采集、14 天保留、数据库读取契约和完整统计 API。统计客户端优先接入 [统计 API v2](STATS_API.md)，下文保留 v1 数据库直读契约。分析页面和长期存储由调用方负责。
 
 ## 稳定接口
 
@@ -20,13 +20,13 @@
 | `include_updater` | boolean，可空 | 下载目录选项 |
 | `include_revoked` | boolean，可空 | 下载目录选项 |
 
-不包含方法、状态码、耗时、响应体字节数、请求 ID、国家/地区、ASN、Referer、请求体、完整 URL、完整查询字符串或任意参数 JSON。
+`requests_v1` 不包含方法、状态码、耗时、字节和地理信息；迁移 00003 新增 `analytics.requests_v2` 暴露这些字段和 UA 分类。仍不保存完整 URL、完整查询字符串、任意参数 JSON、请求体或认证信息。
 
-因此可以分析请求趋势、路由、IP、UA 和版本分布；不能计算错误率、请求延迟、带宽、CDN 缓存命中率或下载完成数。IP 数量不等同于用户数量，UA 可由客户端伪造。
+v1 可分析请求趋势、路由、IP、UA 和版本分布。v2 和统计 API 增加错误率、应用耗时、响应体字节、来源和可选地理统计；实际口径见统计文档。IP 数量不等同于用户数量，UA 可由客户端伪造。
 
 ## 白名单和缺省规则
 
-只记录路径严格为 `/latest` 或以 `/api/` 开头的请求，包含这些路径下的 HEAD、OPTIONS、未匹配请求和错误请求。采集的是到达 Go 应用的请求；CDN 缓存命中或在边缘被阻断的请求不会出现。`/dist` 不采集。
+只记录路径严格为 `/latest` 或以 `/api/` 开头的请求，包含 HEAD、OPTIONS、未匹配请求和错误请求。默认排除 `/api/admin/stats` 及其子路径，避免面板轮询污染。`/dist` 不采集。
 
 | 路由 | 采集参数 |
 | --- | --- |
@@ -40,7 +40,7 @@
 
 `version` 查询参数不是现有 API 支持的别名，忽略；目标版本来自路由。`foo`、`token`、`start`、`end` 等未定义参数全部忽略，不读取 Webhook 或管理请求体中的字段作为统计维度。存在相同查询参数多次时采用接口使用的第一个值。
 
-UA 不解析浏览器/系统，也不在请求链路做 IP 地理查询。内部仅对非法 UTF-8 或 NUL 做数据库可存储的替换，正常 UA 原样保留。
+UA 在后台批量写入时解析浏览器/系统/设备和机器人分类，地理信息使用可选本地 MMDB，不调用在线 IP 服务。内部对非法 UTF-8 或 NUL 做数据库可存储的替换，正常 UA 原样保留。
 
 ## 可见性和保留
 
@@ -63,6 +63,8 @@ CREATE ROLE analytics_reader LOGIN PASSWORD '<随机密码>';
 GRANT CONNECT ON DATABASE axolotl TO analytics_reader;
 GRANT USAGE ON SCHEMA analytics TO analytics_reader;
 GRANT SELECT ON analytics.requests_v1 TO analytics_reader;
+-- 执行 00003 迁移后，按需授权新增视图：
+GRANT SELECT ON analytics.requests_v2 TO analytics_reader;
 ALTER ROLE analytics_reader SET default_transaction_read_only = on;
 ALTER ROLE analytics_reader SET statement_timeout = '30s';
 ALTER ROLE analytics_reader SET idle_in_transaction_session_timeout = '30s';

@@ -1,0 +1,3537 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Axolotl Origin Statistics API",
+    "version": "2.0.0",
+    "description": "Authenticated origin request analytics, 14-day retention, no Cloudflare dependency. See STATS_API.md for measurement semantics and upgrade instructions."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8082"
+    }
+  ],
+  "paths": {
+    "/api/admin/stats": {
+      "get": {
+        "operationId": "stats_dashboard",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Dashboard",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          },
+          {
+            "name": "dimensions",
+            "in": "query",
+            "description": "Up to eight comma-separated dimensions. Defaults to route,status_code,country,browser,os,device_type,channel,client_version.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "scope",
+                    "generated_at",
+                    "window",
+                    "data"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": 2
+                    },
+                    "scope": {
+                      "const": "origin"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window": {
+                      "$ref": "#/components/schemas/Window"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/Dashboard"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_dashboard_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD dashboard",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          },
+          {
+            "name": "dimensions",
+            "in": "query",
+            "description": "Up to eight comma-separated dimensions. Defaults to route,status_code,country,browser,os,device_type,channel,client_version.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    },
+    "/api/admin/stats/overview": {
+      "get": {
+        "operationId": "stats_overview",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Overview",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "scope",
+                    "generated_at",
+                    "window",
+                    "data"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": 2
+                    },
+                    "scope": {
+                      "const": "origin"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window": {
+                      "$ref": "#/components/schemas/Window"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/Overview"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_overview_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD overview",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    },
+    "/api/admin/stats/timeseries": {
+      "get": {
+        "operationId": "stats_timeseries",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Timeseries",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "scope",
+                    "generated_at",
+                    "window",
+                    "data"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": 2
+                    },
+                    "scope": {
+                      "const": "origin"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window": {
+                      "$ref": "#/components/schemas/Window"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TimePoint"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_timeseries_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD timeseries",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    },
+    "/api/admin/stats/breakdown": {
+      "get": {
+        "operationId": "stats_breakdown",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Breakdown",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "app_cache",
+                "asn",
+                "asn_org",
+                "browser",
+                "browser_version",
+                "channel",
+                "city",
+                "client_ip",
+                "client_version",
+                "content_type",
+                "continent",
+                "country",
+                "device_type",
+                "error_code",
+                "host",
+                "http_version",
+                "include_revoked",
+                "include_updater",
+                "ip_version",
+                "is_bot",
+                "method",
+                "os",
+                "os_version",
+                "platform",
+                "referer_host",
+                "region",
+                "route",
+                "scheme",
+                "status_class",
+                "status_code",
+                "target_version",
+                "tls_version",
+                "user_agent"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "scope",
+                    "generated_at",
+                    "window",
+                    "data"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": 2
+                    },
+                    "scope": {
+                      "const": "origin"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window": {
+                      "$ref": "#/components/schemas/Window"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/Breakdown"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_breakdown_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD breakdown",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "app_cache",
+                "asn",
+                "asn_org",
+                "browser",
+                "browser_version",
+                "channel",
+                "city",
+                "client_ip",
+                "client_version",
+                "content_type",
+                "continent",
+                "country",
+                "device_type",
+                "error_code",
+                "host",
+                "http_version",
+                "include_revoked",
+                "include_updater",
+                "ip_version",
+                "is_bot",
+                "method",
+                "os",
+                "os_version",
+                "platform",
+                "referer_host",
+                "region",
+                "route",
+                "scheme",
+                "status_class",
+                "status_code",
+                "target_version",
+                "tls_version",
+                "user_agent"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    },
+    "/api/admin/stats/requests": {
+      "get": {
+        "operationId": "stats_requests",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Requests",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque next_cursor; keep identical filters. Carries a fixed time window; expired/changed cursors return 400.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "schema_version",
+                    "scope",
+                    "generated_at",
+                    "window",
+                    "data"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": 2
+                    },
+                    "scope": {
+                      "const": "origin"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window": {
+                      "$ref": "#/components/schemas/Window"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RequestPage"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_requests_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD requests",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/start"
+          },
+          {
+            "$ref": "#/components/parameters/end"
+          },
+          {
+            "$ref": "#/components/parameters/interval"
+          },
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/filter_app_cache"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn"
+          },
+          {
+            "$ref": "#/components/parameters/filter_asn_org"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser"
+          },
+          {
+            "$ref": "#/components/parameters/filter_browser_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_channel"
+          },
+          {
+            "$ref": "#/components/parameters/filter_city"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_ip"
+          },
+          {
+            "$ref": "#/components/parameters/filter_client_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_content_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_continent"
+          },
+          {
+            "$ref": "#/components/parameters/filter_country"
+          },
+          {
+            "$ref": "#/components/parameters/filter_device_type"
+          },
+          {
+            "$ref": "#/components/parameters/filter_error_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_http_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_revoked"
+          },
+          {
+            "$ref": "#/components/parameters/filter_include_updater"
+          },
+          {
+            "$ref": "#/components/parameters/filter_ip_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_is_bot"
+          },
+          {
+            "$ref": "#/components/parameters/filter_method"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os"
+          },
+          {
+            "$ref": "#/components/parameters/filter_os_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_platform"
+          },
+          {
+            "$ref": "#/components/parameters/filter_referer_host"
+          },
+          {
+            "$ref": "#/components/parameters/filter_region"
+          },
+          {
+            "$ref": "#/components/parameters/filter_route"
+          },
+          {
+            "$ref": "#/components/parameters/filter_scheme"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_class"
+          },
+          {
+            "$ref": "#/components/parameters/filter_status_code"
+          },
+          {
+            "$ref": "#/components/parameters/filter_target_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_tls_version"
+          },
+          {
+            "$ref": "#/components/parameters/filter_user_agent"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque next_cursor; keep identical filters. Carries a fixed time window; expired/changed cursors return 400.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    },
+    "/api/admin/stats/meta": {
+      "get": {
+        "operationId": "stats_meta",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Meta",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Metadata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_meta_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD meta",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    },
+    "/api/admin/stats/status": {
+      "get": {
+        "operationId": "stats_status",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "Status",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid administrator token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database or internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "head": {
+        "operationId": "stats_status_head",
+        "tags": [
+          "Statistics"
+        ],
+        "summary": "HEAD status",
+        "security": [
+          {
+            "AdminBearer": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Statistics response. No-store; asynchronous ingestion can lag.",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query"
+          },
+          "401": {
+            "description": "Missing or invalid administrator token"
+          },
+          "429": {
+            "description": "Rate limit or two concurrent statistics requests already running"
+          },
+          "503": {
+            "description": "Query timed out or authentication is not configured"
+          },
+          "500": {
+            "description": "Database or internal error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AdminBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "parameters": {
+      "start": {
+        "name": "start",
+        "in": "query",
+        "description": "Inclusive RFC3339 start; default end-24h; clamped to 14-day retention.",
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "end": {
+        "name": "end",
+        "in": "query",
+        "description": "Exclusive RFC3339 end; default current time.",
+        "schema": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "interval": {
+        "name": "interval",
+        "in": "query",
+        "description": "UTC bucket interval; auto targets at most about 240 buckets; at most 2000 buckets.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "1m",
+            "5m",
+            "15m",
+            "1h",
+            "6h",
+            "1d"
+          ],
+          "default": "auto"
+        }
+      },
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Top groups: default 20. Request page: default 100.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "filter_app_cache": {
+        "name": "app_cache",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_asn": {
+        "name": "asn",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "filter_asn_org": {
+        "name": "asn_org",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_browser": {
+        "name": "browser",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_browser_version": {
+        "name": "browser_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_channel": {
+        "name": "channel",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_city": {
+        "name": "city",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_client_ip": {
+        "name": "client_ip",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_client_version": {
+        "name": "client_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_content_type": {
+        "name": "content_type",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_continent": {
+        "name": "continent",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_country": {
+        "name": "country",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_device_type": {
+        "name": "device_type",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_error_code": {
+        "name": "error_code",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_host": {
+        "name": "host",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_http_version": {
+        "name": "http_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_include_revoked": {
+        "name": "include_revoked",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "filter_include_updater": {
+        "name": "include_updater",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "filter_ip_version": {
+        "name": "ip_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "filter_is_bot": {
+        "name": "is_bot",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "filter_method": {
+        "name": "method",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_os": {
+        "name": "os",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_os_version": {
+        "name": "os_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_platform": {
+        "name": "platform",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_referer_host": {
+        "name": "referer_host",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_region": {
+        "name": "region",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_route": {
+        "name": "route",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_scheme": {
+        "name": "scheme",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_status_class": {
+        "name": "status_class",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_status_code": {
+        "name": "status_code",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "filter_target_version": {
+        "name": "target_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_tls_version": {
+        "name": "tls_version",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filter_user_agent": {
+        "name": "user_agent",
+        "in": "query",
+        "description": "Exact filter; combined with other filters using AND. Unknown/missing values form a null breakdown group.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "Metrics": {
+        "type": "object",
+        "required": [
+          "requests",
+          "unique_ips",
+          "unique_user_agents",
+          "status_samples",
+          "status_1xx",
+          "status_2xx",
+          "status_3xx",
+          "status_4xx",
+          "status_5xx",
+          "rate_limited_requests",
+          "access_denied_requests",
+          "response_bytes",
+          "request_bytes",
+          "response_byte_samples",
+          "request_byte_samples",
+          "duration_samples",
+          "avg_duration_ms",
+          "max_duration_ms",
+          "bot_samples",
+          "bot_requests",
+          "country_samples",
+          "app_cache_hits",
+          "app_cache_misses",
+          "app_cache_bypass",
+          "error_rate",
+          "app_cache_hit_rate",
+          "requests_per_second"
+        ],
+        "properties": {
+          "requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unique_ips": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "unique_user_agents": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_1xx": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_2xx": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_3xx": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_4xx": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_5xx": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rate_limited_requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "access_denied_requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "response_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "request_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "response_byte_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "request_byte_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duration_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "avg_duration_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "max_duration_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "bot_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bot_requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "country_samples": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "app_cache_hits": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "app_cache_misses": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "app_cache_bypass": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "app_cache_hit_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "requests_per_second": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "Request": {
+        "type": "object",
+        "required": [
+          "id",
+          "occurred_at",
+          "client_ip",
+          "user_agent",
+          "route",
+          "channel",
+          "client_version",
+          "platform",
+          "target_version",
+          "include_updater",
+          "include_revoked",
+          "method",
+          "status_code",
+          "duration_ms",
+          "request_bytes",
+          "response_bytes",
+          "host",
+          "scheme",
+          "http_version",
+          "tls_version",
+          "content_type",
+          "referer_host",
+          "app_cache",
+          "error_code",
+          "ip_version",
+          "country",
+          "continent",
+          "region",
+          "city",
+          "latitude",
+          "longitude",
+          "asn",
+          "asn_org",
+          "browser",
+          "browser_version",
+          "os",
+          "os_version",
+          "device_type",
+          "is_bot"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "client_ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_agent": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "include_updater": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "include_revoked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "duration_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "request_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "response_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scheme": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "http_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tls_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "referer_host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "app_cache": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ip_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "continent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latitude": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "longitude": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "asn": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "asn_org": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "browser": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "browser_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "os_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "is_bot": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "Latency": {
+        "type": "object",
+        "required": [
+          "p50_ms",
+          "p90_ms",
+          "p95_ms",
+          "p99_ms"
+        ],
+        "properties": {
+          "p50_ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p90_ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p95_ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p99_ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "Overview": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Metrics"
+          },
+          {
+            "type": "object",
+            "required": [
+              "latency"
+            ],
+            "properties": {
+              "latency": {
+                "$ref": "#/components/schemas/Latency"
+              }
+            }
+          }
+        ]
+      },
+      "TimePoint": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Metrics"
+          },
+          {
+            "type": "object",
+            "required": [
+              "time"
+            ],
+            "properties": {
+              "time": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        ]
+      },
+      "BreakdownItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Metrics"
+          },
+          {
+            "type": "object",
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Breakdown": {
+        "type": "object",
+        "required": [
+          "dimension",
+          "items",
+          "total_requests",
+          "other_requests",
+          "limit"
+        ],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "app_cache",
+              "asn",
+              "asn_org",
+              "browser",
+              "browser_version",
+              "channel",
+              "city",
+              "client_ip",
+              "client_version",
+              "content_type",
+              "continent",
+              "country",
+              "device_type",
+              "error_code",
+              "host",
+              "http_version",
+              "include_revoked",
+              "include_updater",
+              "ip_version",
+              "is_bot",
+              "method",
+              "os",
+              "os_version",
+              "platform",
+              "referer_host",
+              "region",
+              "route",
+              "scheme",
+              "status_class",
+              "status_code",
+              "target_version",
+              "tls_version",
+              "user_agent"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BreakdownItem"
+            }
+          },
+          "total_requests": {
+            "type": "integer"
+          },
+          "other_requests": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "RequestPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor",
+          "has_more",
+          "limit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Request"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        }
+      },
+      "Window": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "interval",
+          "interval_seconds",
+          "filters",
+          "retention_clamped"
+        ],
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "interval": {
+            "type": "string"
+          },
+          "interval_seconds": {
+            "type": "integer"
+          },
+          "filters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "retention_clamped": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Dashboard": {
+        "type": "object",
+        "required": [
+          "overview",
+          "timeseries",
+          "breakdowns"
+        ],
+        "properties": {
+          "overview": {
+            "$ref": "#/components/schemas/Overview"
+          },
+          "timeseries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimePoint"
+            }
+          },
+          "breakdowns": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Breakdown"
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "request_id"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "CollectorCounters": {
+        "type": "object",
+        "properties": {
+          "written": {
+            "type": "integer"
+          },
+          "failed_batches": {
+            "type": "integer"
+          },
+          "dropped": {
+            "type": "integer"
+          },
+          "queue_length": {
+            "type": "integer"
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "data"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "scope": {
+                "const": "origin"
+              },
+              "retention_days": {
+                "const": 14
+              },
+              "requests": {
+                "type": "integer"
+              },
+              "requests_with_http_metrics": {
+                "type": "integer"
+              },
+              "oldest_request": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "newest_request": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "collector_attached": {
+                "type": "boolean"
+              },
+              "collector": {
+                "$ref": "#/components/schemas/CollectorCounters"
+              }
+            }
+          }
+        }
+      },
+      "Metadata": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "scope",
+          "retention_days",
+          "dimensions",
+          "intervals",
+          "metrics",
+          "capabilities"
+        ],
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "scope": {
+            "const": "origin"
+          },
+          "retention_days": {
+            "const": 14
+          },
+          "dimensions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "app_cache",
+                "asn",
+                "asn_org",
+                "browser",
+                "browser_version",
+                "channel",
+                "city",
+                "client_ip",
+                "client_version",
+                "content_type",
+                "continent",
+                "country",
+                "device_type",
+                "error_code",
+                "host",
+                "http_version",
+                "include_revoked",
+                "include_updater",
+                "ip_version",
+                "is_bot",
+                "method",
+                "os",
+                "os_version",
+                "platform",
+                "referer_host",
+                "region",
+                "route",
+                "scheme",
+                "status_class",
+                "status_code",
+                "target_version",
+                "tls_version",
+                "user_agent"
+              ]
+            }
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "collection_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "includes_stats_requests": {
+            "type": "boolean"
+          },
+          "sampling": {
+            "type": "string"
+          },
+          "bytes_semantics": {
+            "type": "string"
+          },
+          "latency_semantics": {
+            "type": "string"
+          },
+          "unique_ip_semantics": {
+            "type": "string"
+          },
+          "unknown_metrics": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

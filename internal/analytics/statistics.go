@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/store"
@@ -118,6 +119,18 @@ func (m *Metrics) finish(seconds float64) {
 func (s *Statistics) Overview(ctx context.Context, q Query) (Overview, error) {
 	var out Overview
 	where, args := q.where()
+	if s.Store.Dialect == "postgres" {
+		var row struct {
+			Metrics
+			P50, P90, P95, P99 *float64
+		}
+		percentiles := `,percentile_cont(0.5) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p50,percentile_cont(0.9) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p90,percentile_cont(0.95) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p95,percentile_cont(0.99) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p99`
+		e := s.Store.DB.WithContext(ctx).Raw("SELECT "+aggregateSQL+percentiles+s.from()+" WHERE "+where, args...).Scan(&row).Error
+		out.Metrics = row.Metrics
+		out.Metrics.finish(q.End.Sub(q.Start).Seconds())
+		out.Latency = Percentiles{row.P50, row.P90, row.P95, row.P99}
+		return out, e
+	}
 	sql := "SELECT " + aggregateSQL + s.from() + " WHERE " + where
 	if e := s.Store.DB.WithContext(ctx).Raw(sql, args...).Scan(&out.Metrics).Error; e != nil {
 		return out, e
@@ -125,11 +138,6 @@ func (s *Statistics) Overview(ctx context.Context, q Query) (Overview, error) {
 	out.Metrics.finish(q.End.Sub(q.Start).Seconds())
 	if out.DurationSamples == 0 {
 		return out, nil
-	}
-	if s.Store.Dialect == "postgres" {
-		query := `SELECT percentile_cont(0.5) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p50,percentile_cont(0.9) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p90,percentile_cont(0.95) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p95,percentile_cont(0.99) WITHIN GROUP(ORDER BY e.duration_us)/1000.0 AS p99` + s.from() + " WHERE " + where + " AND e.duration_us IS NOT NULL"
-		e := s.Store.DB.WithContext(ctx).Raw(query, args...).Scan(&out.Latency).Error
-		return out, e
 	}
 	// SQLite debug path computes the same continuous percentiles in SQL.
 	columns := []string{}
@@ -164,6 +172,9 @@ func (s *Statistics) Timeseries(ctx context.Context, q Query) ([]TimePoint, erro
 	}
 	var rows []TimePoint
 	sql := "SELECT " + bucket + " AS bucket_unix," + aggregateSQL + s.from() + " WHERE " + where + " GROUP BY " + bucket + " ORDER BY bucket_unix"
+	if s.Store.Dialect == "postgres" {
+		sql = "WITH partial AS (SELECT " + bucket + " AS bucket_unix,e.client_ip,e.user_agent_id," + partialAggregateSQL() + s.from() + " WHERE " + where + " GROUP BY " + bucket + ",e.client_ip,e.user_agent_id) SELECT p.bucket_unix," + weightedAggregateSQL() + " FROM partial p GROUP BY p.bucket_unix ORDER BY p.bucket_unix"
+	}
 	if e := s.Store.DB.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; e != nil {
 		return nil, e
 	}
@@ -196,22 +207,116 @@ func (s *Statistics) Breakdown(ctx context.Context, q Query, dimension string) (
 	if e := q.validateDimension(dimension); e != nil {
 		return out, e
 	}
+	if s.Store.Dialect == "postgres" {
+		groups, e := s.Breakdowns(ctx, q, []string{dimension})
+		if e != nil {
+			return out, e
+		}
+		return groups[dimension], nil
+	}
 	where, args := q.where()
 	column := s.dimension(dimension)
-	sql := "SELECT " + column + " AS value," + aggregateSQL + s.from() + " WHERE " + where + " GROUP BY " + column + " ORDER BY requests DESC," + column + " ASC NULLS LAST LIMIT ?"
+	sql := "SELECT " + column + " AS value," + aggregateSQL + ",SUM(COUNT(*)) OVER() AS total_requests" + s.from() + " WHERE " + where + " GROUP BY " + column + " ORDER BY requests DESC," + column + " ASC NULLS LAST LIMIT ?"
 	args = append(args, q.Limit)
-	if e := s.Store.DB.WithContext(ctx).Raw(sql, args...).Scan(&out.Items).Error; e != nil {
+	var rows []struct {
+		BreakdownItem
+		TotalRequests int64
+	}
+	if e := s.Store.DB.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; e != nil {
 		return out, e
+	}
+	for _, row := range rows {
+		out.Items = append(out.Items, row.BreakdownItem)
+		out.TotalRequests = row.TotalRequests
 	}
 	returned := int64(0)
 	for i := range out.Items {
 		out.Items[i].Metrics.finish(q.End.Sub(q.Start).Seconds())
 		returned += out.Items[i].Requests
 	}
-	where, args = q.where()
-	if e := s.Store.DB.WithContext(ctx).Raw("SELECT COUNT(*)"+s.from()+" WHERE "+where, args...).Scan(&out.TotalRequests).Error; e != nil {
-		return out, e
-	}
 	out.OtherRequests = out.TotalRequests - returned
 	return out, nil
+}
+
+// PostgreSQL computes all dashboard distributions with a single scan and GROUPING SETS.
+func (s *Statistics) Breakdowns(ctx context.Context, q Query, dimensions []string) (map[string]Breakdown, error) {
+	out := map[string]Breakdown{}
+	unique := []string{}
+	for _, dim := range dimensions {
+		if e := q.validateDimension(dim); e != nil {
+			return nil, e
+		}
+		if _, ok := out[dim]; ok {
+			continue
+		}
+		unique = append(unique, dim)
+		out[dim] = Breakdown{Dimension: dim, Items: []BreakdownItem{}, Limit: q.Limit}
+	}
+	if len(unique) == 0 {
+		return out, nil
+	}
+	if s.Store.Dialect != "postgres" {
+		for _, dim := range unique {
+			group, e := s.Breakdown(ctx, q, dim)
+			if e != nil {
+				return nil, e
+			}
+			out[dim] = group
+		}
+		return out, nil
+	}
+	names, values, sets, selected, groupBy := []string{}, []string{}, []string{}, []string{}, []string{}
+	for i, dim := range unique {
+		expression := s.dimension(dim)
+		alias := fmt.Sprintf("d%d", i)
+		col := "p." + alias
+		selected = append(selected, expression+" AS "+alias)
+		groupBy = append(groupBy, expression)
+		names = append(names, "WHEN GROUPING("+col+")=0 THEN '"+dim+"'")
+		values = append(values, "WHEN GROUPING("+col+")=0 THEN "+col)
+		sets = append(sets, "("+col+")")
+	}
+	where, args := q.where()
+	sql := "WITH partial AS (SELECT " + join(selected, ",") + ",e.client_ip,e.user_agent_id," + partialAggregateSQL() + s.from() + " WHERE " + where + " GROUP BY " + join(groupBy, ",") + ",e.client_ip,e.user_agent_id),grouped AS (SELECT CASE " + join(names, " ") + " END AS dimension,CASE " + join(values, " ") + " END AS value," + weightedAggregateSQL() + " FROM partial p GROUP BY GROUPING SETS (" + join(sets, ",") + ")),ranked AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY dimension ORDER BY requests DESC,value ASC NULLS LAST) AS rank,SUM(requests) OVER(PARTITION BY dimension) AS total_requests FROM grouped) SELECT * FROM ranked WHERE rank<=? ORDER BY dimension,rank"
+	args = append(args, q.Limit)
+	var rows []struct {
+		Dimension string
+		BreakdownItem
+		TotalRequests int64
+	}
+	if e := s.Store.DB.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; e != nil {
+		return nil, e
+	}
+	for _, row := range rows {
+		group := out[row.Dimension]
+		item := row.BreakdownItem
+		item.Metrics.finish(q.End.Sub(q.Start).Seconds())
+		group.Items = append(group.Items, item)
+		group.TotalRequests = row.TotalRequests
+		out[row.Dimension] = group
+	}
+	for key, group := range out {
+		shown := int64(0)
+		for _, item := range group.Items {
+			shown += item.Requests
+		}
+		group.OtherRequests = group.TotalRequests - shown
+		out[key] = group
+	}
+	return out, nil
+}
+
+// Collapse repeated client/dimension combinations before DISTINCT aggregation.
+// Counts remain exact; latency averages use sums/sample counts, never averages of averages.
+func partialAggregateSQL() string {
+	sql := strings.Replace(aggregateSQL, "COUNT(DISTINCT e.client_ip) AS unique_ips,COUNT(DISTINCT e.user_agent_id) AS unique_user_agents,", "", 1)
+	return strings.Replace(sql, "AVG(e.duration_us) AS average_duration_us", "SUM(e.duration_us) AS duration_sum_us", 1)
+}
+func weightedAggregateSQL() string {
+	columns := []string{"requests", "status_samples", "informational", "successful", "redirects", "client_errors", "server_errors", "rate_limited", "access_denied", "response_bytes", "request_bytes", "response_byte_samples", "request_byte_samples", "duration_samples", "bot_samples", "bot_requests", "country_samples", "cache_hits", "cache_misses", "cache_bypass"}
+	parts := []string{"COUNT(DISTINCT p.client_ip) AS unique_ips", "COUNT(DISTINCT p.user_agent_id) AS unique_user_agents", "SUM(p.duration_sum_us)*1.0/NULLIF(SUM(p.duration_samples),0) AS average_duration_us", "MAX(p.max_duration_us) AS max_duration_us"}
+	for _, col := range columns {
+		parts = append(parts, "SUM(p."+col+") AS "+col)
+	}
+	return join(parts, ",")
 }
