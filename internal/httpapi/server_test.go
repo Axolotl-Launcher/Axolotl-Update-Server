@@ -241,7 +241,7 @@ func TestBadInputsAndRemovedEndpoints(t *testing.T) {
 		method, path, body string
 		status             int
 		headers            map[string]string
-	}{{"GET", "/latest?channel=no", "", 400, nil}, {"GET", "/latest?current_version=1.2", "", 400, nil}, {"PUT", "/api/artifacts/1.2.3/a", "", 404, nil}, {"GET", "/api/admin/stats", "", 404, nil}, {"GET", "/api/admin/audit-logs", "", 401, nil}, {"OPTIONS", "/api/downloads/latest", "", 200, nil}, {"PATCH", "/api/admin/versions/1.2.3/force-update", `{"force_update":"true"}`, 400, admin}} {
+	}{{"GET", "/latest?channel=no", "", 400, nil}, {"GET", "/latest?current_version=1.2", "", 400, nil}, {"PUT", "/api/artifacts/1.2.3/a", "", 404, nil}, {"GET", "/api/admin/stats", "", 401, nil}, {"GET", "/api/admin/audit-logs", "", 401, nil}, {"OPTIONS", "/api/downloads/latest", "", 200, nil}, {"PATCH", "/api/admin/versions/1.2.3/force-update", `{"force_update":"true"}`, 400, admin}} {
 		w := call(api, tc.method, tc.path, tc.body, tc.headers)
 		if w.Code != tc.status {
 			t.Fatal(tc, w.Code, w.Body)

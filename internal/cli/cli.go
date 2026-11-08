@@ -197,6 +197,7 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 		close(maintenanceDone)
 	}
 	api := httpapi.New(service.New(s, c), observer)
+	api.Collector = collector
 	server := &http.Server{Addr: net.JoinHostPort(c.Host, c.Port), Handler: api.Router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()

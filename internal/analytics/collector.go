@@ -12,8 +12,10 @@ type Sink interface {
 	Write(context.Context, []Event) error
 }
 type Counters struct {
-	Written, FailedBatches, Dropped uint64
-	QueueLength                     int
+	Written       uint64 `json:"written"`
+	FailedBatches uint64 `json:"failed_batches"`
+	Dropped       uint64 `json:"dropped"`
+	QueueLength   int    `json:"queue_length"`
 }
 type Collector struct {
 	sink                     Sink

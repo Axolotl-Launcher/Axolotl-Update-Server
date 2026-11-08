@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/analytics"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/service"
 	"github.com/gin-gonic/gin"
@@ -26,13 +27,16 @@ type bucket struct {
 	last  time.Time
 }
 type Server struct {
-	Service   *service.Service
-	Router    *gin.Engine
-	observer  Observer
-	ip        *IPResolver
-	mu        sync.Mutex
-	buckets   map[string]bucket
-	lastSweep time.Time
+	Service    *service.Service
+	Router     *gin.Engine
+	observer   Observer
+	ip         *IPResolver
+	mu         sync.Mutex
+	buckets    map[string]bucket
+	lastSweep  time.Time
+	statistics *analytics.Statistics
+	statsGate  chan struct{}
+	Collector  *analytics.Collector
 }
 
 func New(s *service.Service, observer Observer) *Server {
@@ -40,6 +44,8 @@ func New(s *service.Service, observer Observer) *Server {
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil)
 	v := &Server{Service: s, Router: r, observer: observer, ip: NewIPResolver(s.Config.TrustedProxyCIDRs), buckets: map[string]bucket{}}
+	v.statistics = &analytics.Statistics{Store: s.Store}
+	v.statsGate = make(chan struct{}, 2)
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 	r.HandleMethodNotAllowed = true
@@ -59,6 +65,10 @@ func New(s *service.Service, observer Observer) *Server {
 	r.PATCH("/api/admin/versions/:version/force-update", v.forceUpdate)
 	r.DELETE("/api/admin/versions/:version", v.deleteVersion)
 	read("/api/admin/audit-logs", v.audit)
+	read("/api/admin/stats", v.statsHandler("dashboard"))
+	for _, kind := range []string{"overview", "timeseries", "breakdown", "requests", "meta", "status"} {
+		read("/api/admin/stats/"+kind, v.statsHandler(kind))
+	}
 	r.NoRoute(func(c *gin.Context) {
 		v.fail(c, domain.Err("not_found", "The requested endpoint does not exist.", 404))
 	})
