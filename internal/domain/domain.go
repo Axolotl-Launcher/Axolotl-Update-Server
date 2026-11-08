@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -46,7 +47,10 @@ func SafeComponent(s string) bool {
 	}
 	return true
 }
-func HashValid(s string) bool { b, e := hex.DecodeString(s); return e == nil && len(b) == 32 }
+
+// EscapeSegment encodes a path component using RFC3986 unreserved characters.
+func EscapeSegment(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") }
+func HashValid(s string) bool       { b, e := hex.DecodeString(s); return e == nil && len(b) == 32 }
 
 func ArtifactPlatforms(a model.Artifact, all []model.Artifact) model.Strings {
 	if len(a.TargetPlatforms) > 0 {

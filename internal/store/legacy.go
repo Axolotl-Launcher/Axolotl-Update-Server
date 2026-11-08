@@ -84,6 +84,27 @@ func ReadLegacy(ctx context.Context, path string) (Snapshot, ImportReport, error
 			row := map[string]any{}
 			for i, k := range columns {
 				row[k] = values[i]
+				if strings.HasSuffix(k, "_at") && values[i] != nil && timestamp(values[i]) == nil {
+					return nil, fmt.Errorf("%s row has invalid %s", table, k)
+				}
+			}
+			required := []string{}
+			switch table {
+			case "version":
+				required = []string{"created_at", "updated_at"}
+			case "artifact":
+				required = []string{"created_at", "updated_at", "uploaded_at"}
+			case "webhook_event":
+				required = []string{"received_at"}
+			case "audit_log":
+				required = []string{"created_at"}
+			case "channel_pointer":
+				required = []string{"updated_at"}
+			}
+			for _, k := range required {
+				if row[k] == nil {
+					return nil, fmt.Errorf("%s row missing %s", table, k)
+				}
 			}
 			out = append(out, row)
 		}

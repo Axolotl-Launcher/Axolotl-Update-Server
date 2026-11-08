@@ -303,6 +303,10 @@ func TestTrustedIP(t *testing.T) {
 func TestDistRedirectAndRateLimit(t *testing.T) {
 	api, svc := setup(t)
 	svc.Config.DistServer = "https://downloads.example.com/base"
+	plus := call(api, "GET", "/dist/1.2.3%2Bbuild/a%2Bb.exe", "", nil)
+	if plus.Code != 302 || plus.Header().Get("Location") != "https://downloads.example.com/base/dist/1.2.3%2Bbuild/a%2Bb.exe" {
+		t.Fatal(plus.Code, plus.Header())
+	}
 	w := call(api, "GET", "/dist/1.2.3/a%20b.exe?x=y", "", nil)
 	if w.Code != 302 || w.Header().Get("Location") != "https://downloads.example.com/base/dist/1.2.3/a%20b.exe?x=y" {
 		t.Fatal(w.Code, w.Header(), w.Body)

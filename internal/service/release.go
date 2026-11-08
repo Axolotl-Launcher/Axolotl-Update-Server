@@ -475,7 +475,7 @@ func (s *Service) prepare(ctx context.Context, p ReleasePayload) ([]model.Artifa
 
 func validateAssetURL(value, tag, filename string) error {
 	u, e := url.Parse(value)
-	expected := "/Axolotl-Launcher/Axolotl/releases/download/" + url.PathEscape(tag) + "/" + url.PathEscape(filename)
+	expected := "/Axolotl-Launcher/Axolotl/releases/download/" + domain.EscapeSegment(tag) + "/" + domain.EscapeSegment(filename)
 	if e != nil || u.Scheme != "https" || u.Host != "github.com" || u.EscapedPath() != expected || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil {
 		return domain.Err("invalid_github_asset_url", "GitHub asset URL is not an allowed release download URL.")
 	}

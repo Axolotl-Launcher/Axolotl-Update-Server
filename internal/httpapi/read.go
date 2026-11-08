@@ -195,7 +195,12 @@ func (v *Server) dist(c *gin.Context) {
 			return
 		}
 		base.Path = strings.TrimRight(base.Path, "/") + "/dist/" + version + "/" + filename
-		base.RawPath = ""
+		escapedParts := []string{domain.EscapeSegment(version)}
+		for _, part := range strings.Split(filename, "/") {
+			escapedParts = append(escapedParts, domain.EscapeSegment(part))
+		}
+		origin, _ := url.Parse(v.Service.Config.DistServer)
+		base.RawPath = strings.TrimRight(origin.EscapedPath(), "/") + "/dist/" + strings.Join(escapedParts, "/")
 		base.RawQuery = c.Request.URL.RawQuery
 		c.Header("Cache-Control", "no-store")
 		c.Header("Cloudflare-CDN-Cache-Control", "no-store")

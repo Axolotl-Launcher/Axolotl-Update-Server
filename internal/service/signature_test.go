@@ -37,6 +37,9 @@ func TestFetchSignatureIntegrityAndLimits(t *testing.T) {
 	}
 }
 func TestAssetURLValidation(t *testing.T) {
+	if e := validateAssetURL("https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.2.3%2Bbuild/a%2Bb.sig", "v1.2.3+build", "a+b.sig"); e != nil {
+		t.Fatal(e)
+	}
 	for _, u := range []string{"http://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.2.3/a.sig", "https://evil.example/a.sig", "https://github.com/Axolotl-Launcher/Axolotl/releases/download/v1.2.3/a.sig?x=y"} {
 		if validateAssetURL(u, "v1.2.3", "a.sig") == nil {
 			t.Fatal(u)

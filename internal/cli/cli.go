@@ -147,12 +147,19 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 	defer func() { cancelBackground(); <-maintenanceDone }()
 	if c.AnalyticsEnabled {
 		storage := &analytics.Storage{Store: s}
-		if _, e := storage.Maintain(ctx, time.Now().UTC(), false); e != nil {
-			slog.Warn("initial analytics maintenance failed; background task will retry", "error", e)
+		maintenanceDelay := time.Hour
+		initialContext, initialCancel := context.WithTimeout(ctx, 30*time.Second)
+		_, initialError := storage.Maintain(initialContext, time.Now().UTC(), false)
+		initialCancel()
+		if initialError != nil {
+			slog.Warn("initial analytics maintenance failed; background task will retry", "error", initialError)
+			maintenanceDelay = time.Minute
 		}
 		collector = analytics.NewCollector(storage, c.AnalyticsQueueSize, c.AnalyticsBatchSize, c.AnalyticsFlushInterval)
 		observer = collector.Observe
 		defer func() {
+			cancelBackground()
+			<-maintenanceDone
 			shutdown, cancel := context.WithTimeout(context.Background(), c.AnalyticsShutdownTimeout)
 			defer cancel()
 			if e := collector.Close(shutdown); e != nil {
@@ -162,7 +169,7 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 		}()
 		go func() {
 			defer close(maintenanceDone)
-			ticker := time.NewTicker(time.Hour)
+			ticker := time.NewTimer(maintenanceDelay)
 			defer ticker.Stop()
 			for {
 				select {
@@ -174,6 +181,9 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 					cancel()
 					if e != nil {
 						slog.Warn("analytics maintenance failed", "error", e)
+						ticker.Reset(time.Minute)
+					} else {
+						ticker.Reset(time.Hour)
 					}
 				}
 			}
