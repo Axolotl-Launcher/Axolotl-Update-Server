@@ -1,0 +1,12 @@
+.env
+/bin/
+/dist/
+/instance/
+/coverage.out
+*.test
+*.exe
+*.db
+*.db-shm
+*.db-wal
+/.tools/
+
