@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: axolotl
+      POSTGRES_USER: axolotl
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axolotl -d axolotl"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  server:
+    build: .
+    environment:
+      APP_ENV: production
+      DATABASE_URL: ${DOCKER_DATABASE_URL:?set DOCKER_DATABASE_URL}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://update.axlmc.org}
+      DIST_SERVER: ${DIST_SERVER:-}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
+    ports:
+      - "127.0.0.1:8082:8082"
+    volumes:
+      - manifests:/srv/app/dist
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 45s
+volumes:
+  postgres-data:
+  manifests:
+
