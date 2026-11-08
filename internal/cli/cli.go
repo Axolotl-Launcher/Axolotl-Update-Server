@@ -7,14 +7,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"time"
 
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/config"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/httpapi"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/service"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/store"
 )
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, e := fmt.Fprintln(out, "Usage: axolotl-server db {migrate|status|import-legacy|verify}\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
+		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
 		return e
 	}
 	c, e := config.Load()
@@ -26,6 +32,19 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("open database: %w", e)
 	}
 	defer s.Close()
+	if args[0] == "serve" {
+		return serve(ctx, s, c)
+	}
+	if args[0] == "manifests" && len(args) == 2 && args[1] == "rebuild" {
+		if e = s.CheckSchema(ctx); e != nil {
+			return e
+		}
+		if e = service.New(s, c).Rebuild(ctx); e != nil {
+			return e
+		}
+		_, e = fmt.Fprintln(out, "Manifests rebuilt.")
+		return e
+	}
 	if args[0] != "db" || len(args) < 2 {
 		return errors.New("unknown command; use --help")
 	}
@@ -81,9 +100,44 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		if e = s.Verify(ctx, want); e != nil {
 			return e
 		}
-		_, e = fmt.Fprintln(out, "Database verification passed.")
+		if e = service.New(s, c).VerifyManifests(ctx); e != nil {
+			return e
+		}
+		_, e = fmt.Fprintln(out, "Database and manifest verification passed.")
 		return e
 	default:
 		return errors.New("unknown database command; use --help")
 	}
+}
+
+func serve(ctx context.Context, s *store.Store, c config.Config) error {
+	if c.Env == "production" {
+		if e := s.CheckSchema(ctx); e != nil {
+			return e
+		}
+	} else {
+		if e := s.Migrate(ctx); e != nil {
+			return e
+		}
+	}
+	api := httpapi.New(service.New(s, c), nil)
+	server := &http.Server{Addr: net.JoinHostPort(c.Host, c.Port), Handler: api.Router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.ListenAndServe() }()
+	slog.Info("server starting", "address", server.Addr, "database", s.Dialect)
+	select {
+	case e := <-errCh:
+		if errors.Is(e, http.ErrServerClosed) {
+			return nil
+		}
+		return e
+	case <-ctx.Done():
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if e := server.Shutdown(shutdown); e != nil {
+		_ = server.Close()
+		return e
+	}
+	return nil
 }
