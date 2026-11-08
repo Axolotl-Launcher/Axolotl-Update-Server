@@ -170,7 +170,6 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 			if e := collector.Close(shutdown); e != nil {
 				slog.Warn("analytics shutdown incomplete", "error", e)
 			}
-			slog.Info("analytics final counters", "stats", collector.Stats())
 		}()
 		go func() {
 			defer close(maintenanceDone)

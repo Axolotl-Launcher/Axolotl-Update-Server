@@ -74,8 +74,6 @@ func (c *Collector) run() {
 	defer c.cancel()
 	tick := time.NewTicker(c.interval)
 	defer tick.Stop()
-	logTick := time.NewTicker(time.Minute)
-	defer logTick.Stop()
 	batch := make([]Event, 0, c.batchSize)
 	nextAttempt := time.Time{}
 	backoff := time.Second
@@ -146,8 +144,6 @@ func (c *Collector) run() {
 			if !time.Now().Before(nextAttempt) {
 				flush()
 			}
-		case <-logTick.C:
-			slog.Info("analytics counters", "stats", c.Stats())
 		case <-c.stop:
 			stopping = true
 		case <-c.ctx.Done():

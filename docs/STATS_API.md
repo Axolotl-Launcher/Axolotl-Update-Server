@@ -137,6 +137,8 @@ ANALYTICS_GEOIP_ASN_DB=/var/lib/axolotl/geoip/GeoLite2-ASN.mmdb
 
 默认队列 10000，每秒或 500 条提交；status.data.collector 的 written、failed_batches、dropped、queue_length 为当前进程计数，重启清零。异步可见性滞后，崩溃和持续故障可能丢失未提交事件。明细只保留 14 天，不做长期汇总。
 
+控制台输出 `[GIN]` 请求访问日志，包含时间、状态码、耗时、解析后的客户端 IP、方法和路径；不输出查询字符串。统计计数只通过 status API 查询，不再周期或退出时输出 analytics counters 日志，异常警告仍保留。
+
 单进程最多两个并发统计查询，默认 15 秒超时；STATS_QUERY_TIMEOUT_SECONDS 可设 1～120 秒。查询还受 `/api/*` IP 限流约束。错误码：400 invalid_stats_query、401 invalid_admin_token、429 stats_busy/rate_limited、503 stats_timeout。所有错误沿用标准 error 对象。
 
 数据在数据库里聚合/分页，不将 14 天明细全读入 Go 内存。PostgreSQL 对重复客户端/维度组合预聚合，再用 GROUPING SETS 一次计算多维分布；去重计数和加权平均保持精确。dashboard 顺序执行概览、时间序列和分组，期间新入库批次可能造成细微数值差异，近实时面板不作为结算快照。

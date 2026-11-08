@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,7 +50,7 @@ func New(s *service.Service, observer Observer) *Server {
 	r.RedirectTrailingSlash = false
 	r.RedirectFixedPath = false
 	r.HandleMethodNotAllowed = true
-	r.Use(v.middleware())
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipQueryString: true, Formatter: accessLogFormatter}), v.middleware())
 	read := func(path string, h gin.HandlerFunc) { r.GET(path, h); r.HEAD(path, h) }
 	read("/api/health", func(c *gin.Context) { v.respond(c, 200, gin.H{"status": "ok", "service": "axolotl-update-server"}) })
 	read("/latest", v.latest)
@@ -74,6 +75,13 @@ func New(s *service.Service, observer Observer) *Server {
 	})
 	r.NoMethod(func(c *gin.Context) { v.fail(c, domain.Err("method_not_allowed", "Method is not allowed.", 405)) })
 	return v
+}
+
+func accessLogFormatter(params gin.LogFormatterParams) string {
+	if ip, ok := params.Keys["client_ip"].(string); ok && ip != "" {
+		params.ClientIP = ip
+	}
+	return fmt.Sprintf("[GIN] %s | %3d | %13v | %15s | %-7s %q\n", params.TimeStamp.Format("2006/01/02 - 15:04:05"), params.StatusCode, params.Latency, params.ClientIP, params.Method, params.Path)
 }
 func (v *Server) middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
