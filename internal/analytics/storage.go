@@ -33,8 +33,20 @@ type userAgent struct {
 }
 type Storage struct {
 	Store *store.Store
-	mu    sync.Mutex
+	once  sync.Once
+	gate  chan struct{}
 }
+
+func (s *Storage) lock(ctx context.Context) error {
+	s.once.Do(func() { s.gate = make(chan struct{}, 1) })
+	select {
+	case s.gate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (s *Storage) unlock() { <-s.gate }
 
 func (s *Storage) tables() (string, string) {
 	if s.Store.Dialect == "postgres" {
@@ -47,8 +59,10 @@ func (s *Storage) Write(ctx context.Context, events []Event) error {
 	if len(events) == 0 {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if e := s.lock(ctx); e != nil {
+		return e
+	}
+	defer s.unlock()
 	et, ut := s.tables()
 	return s.Store.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		unique := map[string]string{}
@@ -119,11 +133,13 @@ type MaintenanceReport struct {
 }
 
 func (s *Storage) Maintain(ctx context.Context, now time.Time, dryRun bool) (MaintenanceReport, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	now = now.UTC()
 	cutoff := now.Add(-14 * 24 * time.Hour)
 	report := MaintenanceReport{CreatePartitions: []string{}, DropPartitions: []string{}, Cutoff: cutoff, DryRun: dryRun}
+	if e := s.lock(ctx); e != nil {
+		return report, e
+	}
+	defer s.unlock()
 	et, ut := s.tables()
 	if s.Store.Dialect != "postgres" {
 		if dryRun {

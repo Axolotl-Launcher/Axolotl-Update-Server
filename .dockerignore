@@ -1,0 +1,11 @@
+.git
+.env
+.tools
+bin
+dist
+instance
+*.db
+*.db-wal
+*.db-shm
+coverage.out
+

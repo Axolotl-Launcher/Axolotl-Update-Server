@@ -180,6 +180,12 @@ func (v *Server) dist(c *gin.Context) {
 			v.fail(c, domain.Err("invalid_dist_path", "Distribution path contains unsafe components."))
 			return
 		}
+		for _, r := range part {
+			if r < 32 || r == 127 {
+				v.fail(c, domain.Err("invalid_dist_path", "Distribution path contains unsafe components."))
+				return
+			}
+		}
 	}
 	if v.Service.Config.DistServer != "" {
 		base, _ := url.Parse(v.Service.Config.DistServer)

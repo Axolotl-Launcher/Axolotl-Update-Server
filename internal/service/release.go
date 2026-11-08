@@ -101,6 +101,27 @@ func (s *Service) Publish(ctx context.Context, raw []byte) (result map[string]an
 	if e := json.Unmarshal(raw, &p); e != nil {
 		return nil, domain.Err("invalid_webhook", "Invalid release payload.")
 	}
+	var rawFields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &rawFields)
+	if b, ok := rawFields["force_update"]; ok && string(b) == "null" {
+		return nil, domain.Err("invalid_force_update", "force_update must be a boolean.")
+	}
+	if p.Catalog != nil {
+		var catalogFields struct {
+			Artifacts []map[string]json.RawMessage `json:"artifacts"`
+		}
+		_ = json.Unmarshal(rawFields["catalog"], &catalogFields)
+		for _, artifact := range catalogFields.Artifacts {
+			if b, ok := artifact["is_public"]; ok && string(b) == "null" {
+				return nil, domain.Err("invalid_artifact_metadata", "is_public must be a boolean.")
+			}
+			for _, key := range []string{"targetPlatforms", "target_platforms"} {
+				if b, ok := artifact[key]; ok && string(b) == "null" {
+					return nil, domain.Err("invalid_artifact_platform", "Updater target platforms must be a non-empty list.")
+				}
+			}
+		}
+	}
 	if p.EventID == "" || len(p.EventID) > 255 {
 		return nil, domain.Err("invalid_webhook", "event_id is required and must not exceed 255 bytes.")
 	}

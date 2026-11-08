@@ -1,0 +1,20 @@
+update.axlmc.org {
+    encode gzip
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8082 {
+            header_up X-Forwarded-For {http.request.remote.host}
+        }
+    }
+    handle /latest {
+        reverse_proxy 127.0.0.1:8082 {
+            header_up X-Forwarded-For {http.request.remote.host}
+        }
+    }
+    handle /dist/* {
+        reverse_proxy 127.0.0.1:8082 {
+            header_up X-Forwarded-For {http.request.remote.host}
+        }
+    }
+    handle { respond "Not found" 404 }
+}
+

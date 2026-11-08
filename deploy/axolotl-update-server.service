@@ -1,0 +1,21 @@
+[Unit]
+Description=Axolotl Update Server (Go)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=axolotl
+Group=axolotl
+WorkingDirectory=/opt/axolotl-update-server
+EnvironmentFile=/opt/axolotl-update-server/.env
+ExecStartPre=/opt/axolotl-update-server/bin/axolotl-server db migrate
+ExecStart=/opt/axolotl-update-server/bin/axolotl-server serve
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target
+

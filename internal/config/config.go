@@ -154,6 +154,12 @@ func validURL(value string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
+	if port := u.Port(); port != "" {
+		n, e := strconv.Atoi(port)
+		if e != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("invalid URL port")
+		}
+	}
 	if (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(value, "\\ \t\r\n") {
 		return nil, fmt.Errorf("expected HTTP(S) URL without credentials/query/fragment")
 	}
