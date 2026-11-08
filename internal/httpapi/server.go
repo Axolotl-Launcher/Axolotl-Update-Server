@@ -68,6 +68,19 @@ func New(s *service.Service, observer Observer) *Server {
 func (v *Server) middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := v.Service.Now()
+		realStart := time.Now()
+		body := &countedBody{ReadCloser: c.Request.Body}
+		c.Request.Body = body
+		c.Set("analytics_include_stats", v.Service.Config.AnalyticsIncludeStatsRequests)
+		scheme := "http"
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else if v.ip.TrustedPeer(c.Request.RemoteAddr) {
+			if forwarded := c.GetHeader("X-Forwarded-Proto"); forwarded == "http" || forwarded == "https" {
+				scheme = forwarded
+			}
+		}
+		c.Set("client_scheme", scheme)
 		rid := c.GetHeader("X-Request-ID")
 		if len(rid) == 0 || len(rid) > 64 {
 			rid = uuid.NewString()
@@ -92,6 +105,8 @@ func (v *Server) middleware() gin.HandlerFunc {
 				v.latestHeaders(c)
 			}
 			if v.observer != nil {
+				c.Set("analytics_duration_us", max(int64(0), time.Since(realStart).Microseconds()))
+				c.Set("analytics_request_bytes", body.Count)
 				v.observer(c, start)
 			}
 		}()
@@ -157,7 +172,19 @@ func (v *Server) fail(c *gin.Context, e error) {
 		slog.Error("request failed", "request_id", c.GetString("request_id"), "error", e)
 		api = domain.Err("internal_error", "An internal error occurred.", 500)
 	}
+	c.Set("error_code", api.Code)
 	v.respond(c, api.Status, gin.H{"error": gin.H{"code": api.Code, "message": api.Message, "request_id": c.GetString("request_id")}})
+}
+
+type countedBody struct {
+	io.ReadCloser
+	Count int64
+}
+
+func (b *countedBody) Read(p []byte) (int, error) {
+	n, e := b.ReadCloser.Read(p)
+	b.Count += int64(n)
+	return n, e
 }
 func (v *Server) admin(c *gin.Context) bool {
 	expected := v.Service.Config.AdminToken

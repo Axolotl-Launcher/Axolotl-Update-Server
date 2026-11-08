@@ -108,12 +108,18 @@ func (s *Service) Version(ctx context.Context, name string) (model.Version, erro
 }
 
 func (s *Service) Latest(ctx context.Context, channel, platform, current string) (*domain.Manifest, error) {
+	state := "miss"
+	if s.Config.LatestCacheTTL <= 0 {
+		state = "bypass"
+	}
+	observeCache(ctx, state)
 	key := channel + "\x00" + platform + "\x00" + current
 	now := s.Now()
 	s.cacheMu.Lock()
 	s.clock++
 	generation := s.generation
 	if entry, ok := s.cache[key]; ok && entry.expires.After(now) && entry.generation == generation {
+		observeCache(ctx, "hit")
 		entry.used = s.clock
 		s.cache[key] = entry
 		s.cacheMu.Unlock()

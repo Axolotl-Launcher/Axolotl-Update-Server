@@ -10,6 +10,7 @@ import (
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/config"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/model"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,7 +28,9 @@ func (v *Server) latest(c *gin.Context) {
 			return
 		}
 	}
-	payload, e := v.Service.Latest(c.Request.Context(), channel, platform, current)
+	cacheState := "bypass"
+	payload, e := v.Service.Latest(service.WithCacheObservation(c.Request.Context(), &cacheState), channel, platform, current)
+	c.Set("app_cache", cacheState)
 	if e != nil {
 		v.fail(c, e)
 		return

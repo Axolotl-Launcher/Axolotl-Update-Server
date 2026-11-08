@@ -146,7 +146,12 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 	maintenanceDone := make(chan struct{})
 	defer func() { cancelBackground(); <-maintenanceDone }()
 	if c.AnalyticsEnabled {
-		storage := &analytics.Storage{Store: s}
+		geo, e := analytics.OpenGeoIP(c.GeoIPCityDB, c.GeoIPASNDB)
+		if e != nil {
+			return e
+		}
+		defer geo.Close()
+		storage := &analytics.Storage{Store: s, Geo: geo}
 		maintenanceDelay := time.Hour
 		initialContext, initialCancel := context.WithTimeout(ctx, 30*time.Second)
 		_, initialError := storage.Maintain(initialContext, time.Now().UTC(), false)

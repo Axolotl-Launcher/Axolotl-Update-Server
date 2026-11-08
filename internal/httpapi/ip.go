@@ -30,6 +30,14 @@ func contains(ps []netip.Prefix, a netip.Addr) bool {
 	}
 	return false
 }
+func (r *IPResolver) TrustedPeer(remote string) bool {
+	host, _, e := net.SplitHostPort(remote)
+	if e != nil {
+		host = remote
+	}
+	ip, e := netip.ParseAddr(host)
+	return e == nil && contains(r.trusted, ip.Unmap())
+}
 func (r *IPResolver) Resolve(remote, forwarded, cf string) string {
 	host, _, e := net.SplitHostPort(remote)
 	if e != nil {

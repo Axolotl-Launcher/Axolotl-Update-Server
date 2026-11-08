@@ -1,6 +1,10 @@
 package analytics
 
 import (
+	"crypto/tls"
+	"mime"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,11 +23,48 @@ func Extract(c *gin.Context, at time.Time) (Event, bool) {
 	if path != "/latest" && !strings.HasPrefix(path, "/api/") {
 		return Event{}, false
 	}
+	if (path == "/api/admin/stats" || strings.HasPrefix(path, "/api/admin/stats/")) && !c.GetBool("analytics_include_stats") {
+		return Event{}, false
+	}
 	route := c.FullPath()
 	if route == "" {
 		route = "unmatched"
 	}
 	e := Event{OccurredAt: at.UTC(), Route: route, UserAgent: c.GetHeader("User-Agent")}
+	e.Method = model.Ptr(c.Request.Method)
+	e.StatusCode = model.Ptr(c.Writer.Status())
+	e.ResponseBytes = model.Ptr(int64(max(0, c.Writer.Size())))
+	e.HTTPVersion = model.Ptr(c.Request.Proto)
+	e.Host = normalizedHost(c.Request.Host)
+	if scheme := c.GetString("client_scheme"); scheme != "" {
+		e.Scheme = &scheme
+	}
+	if value, ok := c.Get("analytics_duration_us"); ok {
+		if n, ok := value.(int64); ok {
+			e.DurationUS = &n
+		}
+	}
+	if value, ok := c.Get("analytics_request_bytes"); ok {
+		if n, ok := value.(int64); ok {
+			e.RequestBytes = &n
+		}
+	}
+	if c.Request.TLS != nil {
+		version := tls.VersionName(c.Request.TLS.Version)
+		e.TLSVersion = &version
+	}
+	if media, _, err := mime.ParseMediaType(c.Writer.Header().Get("Content-Type")); err == nil {
+		e.ContentType = &media
+	}
+	if ref, err := url.Parse(c.GetHeader("Referer")); err == nil && (ref.Scheme == "http" || ref.Scheme == "https") {
+		e.RefererHost = normalizedHost(ref.Host)
+	}
+	if cache := c.GetString("app_cache"); cache != "" {
+		e.AppCache = &cache
+	}
+	if code := c.GetString("error_code"); code != "" {
+		e.ErrorCode = &code
+	}
 	if ip := c.GetString("client_ip"); ip != "" {
 		e.ClientIP = model.Ptr(ip)
 	}
@@ -71,4 +112,16 @@ func Extract(c *gin.Context, at time.Time) (Event, bool) {
 		}
 	}
 	return e, true
+}
+
+func normalizedHost(raw string) *string {
+	host := raw
+	if h, _, err := net.SplitHostPort(raw); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]."))
+	if host == "" || strings.ContainsAny(host, "/\\\x00\r\n ") {
+		return nil
+	}
+	return &host
 }

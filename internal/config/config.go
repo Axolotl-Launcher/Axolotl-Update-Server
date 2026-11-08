@@ -26,6 +26,9 @@ type Config struct {
 	AnalyticsEnabled                                                  bool
 	AnalyticsQueueSize, AnalyticsBatchSize                            int
 	AnalyticsFlushInterval, AnalyticsShutdownTimeout                  time.Duration
+	GeoIPCityDB, GeoIPASNDB                                           string
+	AnalyticsIncludeStatsRequests                                     bool
+	StatsQueryTimeout                                                 time.Duration
 }
 
 var CloudflareCIDRs = []string{
@@ -39,15 +42,31 @@ var CloudflareCIDRs = []string{
 
 func Default() Config {
 	return Config{Env: "development", DatabaseURL: "sqlite://instance/update-server.db", DistRoot: "dist", PublicBaseURL: "https://update.axlmc.org", Host: "127.0.0.1", Port: "8082",
-		TrustedProxyCIDRs: append([]string{"127.0.0.1/32", "::1/128"}, CloudflareCIDRs...), MaxBodyBytes: 512 << 20,
+		TrustedProxyCIDRs: []string{"127.0.0.1/32", "::1/128"}, MaxBodyBytes: 512 << 20,
 		WebhookMaxAge: 300 * time.Second, LatestCacheTTL: 30 * time.Second, RateLimit: 120,
 		DownloadConnectTimeout: 10 * time.Second, DownloadReadTimeout: 60 * time.Second, DownloadRetries: 3,
-		AnalyticsEnabled: true, AnalyticsQueueSize: 10000, AnalyticsBatchSize: 500, AnalyticsFlushInterval: time.Second, AnalyticsShutdownTimeout: 10 * time.Second}
+		AnalyticsEnabled: true, AnalyticsQueueSize: 10000, AnalyticsBatchSize: 500, AnalyticsFlushInterval: time.Second, AnalyticsShutdownTimeout: 10 * time.Second, StatsQueryTimeout: 15 * time.Second}
 }
 
 func Load() (Config, error) {
 	_ = godotenv.Load()
 	c := Default()
+	c.GeoIPCityDB = os.Getenv("ANALYTICS_GEOIP_CITY_DB")
+	c.GeoIPASNDB = os.Getenv("ANALYTICS_GEOIP_ASN_DB")
+	if raw, ok := os.LookupEnv("ANALYTICS_INCLUDE_STATS_REQUESTS"); ok {
+		b, e := strconv.ParseBool(raw)
+		if e != nil {
+			return c, fmt.Errorf("ANALYTICS_INCLUDE_STATS_REQUESTS must be a boolean")
+		}
+		c.AnalyticsIncludeStatsRequests = b
+	}
+	if raw, ok := os.LookupEnv("STATS_QUERY_TIMEOUT_SECONDS"); ok {
+		n, e := strconv.Atoi(raw)
+		if e != nil || n < 1 || n > 120 {
+			return c, fmt.Errorf("STATS_QUERY_TIMEOUT_SECONDS must be between 1 and 120")
+		}
+		c.StatsQueryTimeout = time.Duration(n) * time.Second
+	}
 	for key, dst := range map[string]*string{"APP_ENV": &c.Env, "DATABASE_URL": &c.DatabaseURL, "DIST_ROOT": &c.DistRoot, "PUBLIC_BASE_URL": &c.PublicBaseURL, "DIST_SERVER": &c.DistServer, "UPDATE_SERVER_HOST": &c.Host, "UPDATE_SERVER_PORT": &c.Port, "ADMIN_TOKEN": &c.AdminToken, "WEBHOOK_SECRET": &c.WebhookSecret} {
 		if v, ok := os.LookupEnv(key); ok {
 			*dst = v

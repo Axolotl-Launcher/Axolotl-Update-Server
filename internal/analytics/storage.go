@@ -18,23 +18,32 @@ import (
 )
 
 type Event struct {
-	OccurredAt                                      time.Time
-	ClientIP                                        *string
-	UserAgent                                       string `gorm:"-"`
-	UserAgentID                                     int64
-	Route                                           string
-	Channel, ClientVersion, Platform, TargetVersion *string
-	IncludeUpdater, IncludeRevoked                  *bool
+	OccurredAt                                                                                   time.Time
+	ClientIP                                                                                     *string
+	UserAgent                                                                                    string `gorm:"-"`
+	UserAgentID                                                                                  int64
+	Route                                                                                        string
+	Channel, ClientVersion, Platform, TargetVersion                                              *string
+	IncludeUpdater, IncludeRevoked                                                               *bool
+	Method, Host, Scheme, HTTPVersion, TLSVersion, ContentType, RefererHost, AppCache, ErrorCode *string
+	StatusCode, IPVersion                                                                        *int
+	DurationUS, RequestBytes, ResponseBytes                                                      *int64
+	Country, Continent, Region, City, ASNOrg                                                     *string
+	Latitude, Longitude                                                                          *float64
+	ASN                                                                                          *int64
 }
 type userAgent struct {
-	ID        int64
-	SHA256    string `gorm:"column:sha256"`
-	UserAgent string
+	ID                                                 int64
+	SHA256                                             string `gorm:"column:sha256"`
+	UserAgent                                          string
+	Browser, BrowserVersion, OS, OSVersion, DeviceType *string
+	IsBot                                              *bool
 }
 type Storage struct {
 	Store *store.Store
 	once  sync.Once
 	gate  chan struct{}
+	Geo   *GeoIP
 }
 
 func (s *Storage) lock(ctx context.Context) error {
@@ -90,6 +99,14 @@ func (s *Storage) Write(ctx context.Context, events []Event) error {
 				} else {
 					normalized := a.Unmap().String()
 					events[i].ClientIP = &normalized
+					version := 6
+					if a.Unmap().Is4() {
+						version = 4
+					}
+					events[i].IPVersion = &version
+					if s.Geo != nil {
+						s.Geo.Enrich(&events[i], a.Unmap())
+					}
 				}
 			}
 		}
@@ -97,7 +114,9 @@ func (s *Storage) Write(ctx context.Context, events []Event) error {
 		sort.Strings(hashes)
 		rows := []userAgent{}
 		for _, hash := range hashes {
-			rows = append(rows, userAgent{SHA256: hash, UserAgent: unique[hash]})
+			row := classifyUA(unique[hash])
+			row.SHA256 = hash
+			rows = append(rows, row)
 		}
 		if e := tx.Table(ut).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "sha256"}}, DoNothing: true}).CreateInBatches(&rows, 100).Error; e != nil {
 			return e
@@ -112,6 +131,12 @@ func (s *Storage) Write(ctx context.Context, events []Event) error {
 				return fmt.Errorf("user agent hash collision")
 			}
 			ids[row.SHA256] = row.ID
+			if row.Browser == nil {
+				parsed := classifyUA(row.UserAgent)
+				if e := tx.Table(ut).Where("id = ?", row.ID).Updates(map[string]any{"browser": parsed.Browser, "browser_version": parsed.BrowserVersion, "os": parsed.OS, "os_version": parsed.OSVersion, "device_type": parsed.DeviceType, "is_bot": parsed.IsBot}).Error; e != nil {
+					return e
+				}
+			}
 		}
 		for i := range events {
 			hash := sha256.Sum256([]byte(events[i].UserAgent))
@@ -120,8 +145,8 @@ func (s *Storage) Write(ctx context.Context, events []Event) error {
 				return fmt.Errorf("missing user agent dictionary entry")
 			}
 		}
-		// 12 fields per row: stay below SQLite's conservative parameter limit.
-		return tx.Table(et).CreateInBatches(&events, 50).Error
+		// Keep the expanded event below SQLite's conservative parameter limit.
+		return tx.Table(et).CreateInBatches(&events, 20).Error
 	})
 }
 
