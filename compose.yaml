@@ -21,6 +21,9 @@ services:
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://update.axlmc.org}
       DIST_SERVER: ${DIST_SERVER:-}
+      DIST_CLOUDFLARE_ONLY: ${DIST_CLOUDFLARE_ONLY:-true}
+      DIST_ORIGIN_SECRET: ${DIST_ORIGIN_SECRET:-}
+      GITHUB_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS: ${GITHUB_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS:-1800}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       ANALYTICS_ENABLED: ${ANALYTICS_ENABLED:-true}
       ANALYTICS_INCLUDE_STATS_REQUESTS: ${ANALYTICS_INCLUDE_STATS_REQUESTS:-false}
@@ -31,6 +34,7 @@ services:
     ports:
       - "127.0.0.1:8082:8082"
     volumes:
+      # Keep the existing volume name so upgrades retain manifests and packages.
       - manifests:/srv/app/dist
     depends_on:
       db:

@@ -1,6 +1,6 @@
 # Axolotl Update Server — Go
 
-Gin 更新服务。生产使用 PostgreSQL，本地调试使用 SQLite；保留 Release/Beta 发布、Tauri 更新清单、下载目录及版本管理。安装包由独立 `DIST_SERVER` 分发，本机只保存清单文件。
+Gin 更新服务。生产使用 PostgreSQL，本地调试使用 SQLite；保留 Release/Beta 发布、Tauri 更新清单、下载目录及版本管理。默认本地保存 Release/Beta 最近各 3 个已发布版本的安装包，缺失时重定向 GitHub，`/dist/*` 默认只接受 Cloudflare 回源；也支持独立 `DIST_SERVER` 分发。
 
 采集到达应用的 `/latest` 和 `/api/*` 请求，明细保留 14 天，提供受管理员认证保护的统计 API：概览、时间趋势、维度分布、性能百分位、状态与流量、客户端/来源/地理信息，以及请求明细。也保留 PostgreSQL 只读视图；不包含分析页面和长期汇总。
 
@@ -48,7 +48,9 @@ ADMIN_TOKEN=<随机令牌>
 WEBHOOK_SECRET=<随机密钥>
 DIST_ROOT=/var/lib/axolotl-update-server/dist
 PUBLIC_BASE_URL=https://update.axlmc.org
-DIST_SERVER=https://downloads.example.com
+DIST_SERVER=
+DIST_CLOUDFLARE_ONLY=true
+TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
 ```
 
 ```sh
@@ -78,6 +80,8 @@ axolotl-server db status
 axolotl-server db import-legacy --source <旧SQLite文件> --dry-run
 axolotl-server db import-legacy --source <旧SQLite文件>
 axolotl-server manifests rebuild
+axolotl-server dist sync
+axolotl-server dist prune
 axolotl-server db verify --source <旧SQLite文件>
 axolotl-server analytics maintain --dry-run
 axolotl-server analytics maintain
@@ -88,14 +92,16 @@ axolotl-server analytics maintain
 ## 行为变化
 
 - 移除旧上传接口 `/api/artifacts/*`；`/api/admin/stats` 使用新统计 API v2 结构。
-- 移除旧本地安装包服务、GitHub 回退下载、安装包保留及转换清理命令。
-- 导入数据使用元数据判断制品可用性。`DIST_SERVER` 为空时只提供 `manifest.json`，其他 `/dist` 文件返回 404。
+- 恢复本地安装包服务：发布时流式下载、校验大小与 SHA-256，Release/Beta 各保留 3 个已发布版本的包，旧包回收保留数据库和清单。
+- 导入数据仍使用元数据判断制品可用性。`DIST_SERVER` 为空时提供本地包，已知已发布制品缺失则 302 到 GitHub；历史最近版本用 `dist sync` 回填。
+- `/dist/*` 默认要求 Cloudflare 来源；本地调试设 `DIST_CLOUDFLARE_ONLY=false`。安装包浏览器缓存 1 小时、CDN 1 天；可变清单不做 CDN 缓存。
 - 保留本地清单、强制更新的原子替换，以及删除文件的隔离和重试。
 - 统计保留查询参数白名单，记录 HTTP/性能/字节指标，但不保存请求体、认证信息、完整 URL 或任意参数。
 
 ## 文档
 
 - [HTTP API](docs/API.md)：协议、认证、发布载荷和缓存行为。
+- [本地分发与 Cloudflare](docs/DISTRIBUTION.md)：各 3 份保留、GitHub 回退、历史回填、OpenResty 配置和缓存规则。
 - [旧服务迁移](docs/MIGRATION.md)：预检、导入、校验、切换与回滚。
 - [外部分析接入](docs/ANALYTICS.md)：稳定视图、白名单字段、权限和查询示例。
 - [统计 API v2](docs/STATS_API.md)：dashboard、筛选、分组、性能、地理信息和升级说明。

@@ -20,7 +20,7 @@
 | `/latest` | Tauri 更新清单；无合适更新返回 204 |
 | `/api/downloads/latest` | 最新下载目录；无合适版本返回 204 |
 | `/api/downloads/:version` | 指定已发布版本的下载目录；不存在或未发布返回 404 |
-| `/dist/:version/:filename` | 配置 `DIST_SERVER` 时 302，否则只提供本地 `manifest.json` |
+| `/dist/:version/:filename` | 默认只允许 Cloudflare；本地文件优先，已知已发布制品缺失时 302 GitHub；可配置 `DIST_SERVER` |
 
 版本详情字段保持旧协议：`version`、`channel`、`status`、`notes`、`release_tag`、`release_id`、`published_at`、`minimum_version`、`force_update`、`artifacts`。
 
@@ -94,11 +94,13 @@ ETag 由响应字段计算，匹配 `If-None-Match` 返回 304。缓存默认 30
   → https://downloads.example.com/base/dist/1.9.4/a%20b.exe?x=y
 ```
 
-302 为 `no-store`。拒绝不安全路径、自指向配置或运行时循环。未配置分发服务器时只提供本地 `manifest.json`，支持 HEAD、条件请求和 Range；不存在返回 404。清单仍使用旧协议的 immutable 缓存，因此强制更新策略以动态 `/latest` 为准。
+302 为 `no-store`。拒绝不安全路径、自指向配置或运行时循环。`DIST_SERVER` 为空时优先提供本地安装包，支持 HEAD、ETag、Range、If-Range；已知公开且已发布的 GitHub 制品缺失时回退到对应 GitHub Release。未知/私有制品或缺失的撤销版本制品不回退。
+
+默认 `DIST_CLOUDFLARE_ONLY=true`，未经过 Cloudflare 的 `/dist/*` 返回 `403 cloudflare_required`；可选 `DIST_ORIGIN_SECRET` 不匹配返回 `403 invalid_origin_secret`。本地调试可关闭来源限制。安装包 `Cache-Control: public, max-age=3600, s-maxage=86400, must-revalidate`，Cloudflare 专用头为 `public, max-age=86400, must-revalidate`；清单为 `no-cache, max-age=0, must-revalidate` 且 CDN `no-store`，不再 immutable。错误/重定向均 `no-store`。完整部署和保留策略见 [本地分发与 Cloudflare](DISTRIBUTION.md)。
 
 ## Release Webhook
 
-`POST /api/webhook/release`。工作流先发布公开 GitHub Release，再发送包含发布元数据和目录的 JSON；无须把安装包上传到本服务。
+`POST /api/webhook/release`。工作流先发布公开 GitHub Release，再发送包含发布元数据和目录的 JSON；无须把安装包上传到本服务。本地分发模式会在提交发布前从 GitHub 下载制品并验证大小/摘要，成功后执行 Release/Beta 各 3 个版本的物理保留；完整发布耗时包含安装包下载。远端分发模式继续只下载签名。
 
 ```text
 X-Webhook-Timestamp: <Unix秒>

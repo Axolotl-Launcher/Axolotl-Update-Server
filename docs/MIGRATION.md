@@ -33,7 +33,7 @@ axolotl-server db verify --source /backup/update-server.db
 
 导入完成后若希望重复预演，创建新的空目标数据库。不要把预演目标当作最终增量同步目标，工具不做合并。
 
-4. 在其他端口启动新服务，检查 `/api/health`、版本列表、Release/Beta `/latest`、两个 macOS 平台和下载目录。分发重定向必须能在外部下载服务器实际找到对应路径。
+4. 本地分发模式停止服务执行 `dist sync` 回填最近各 3 个版本的安装包，再在其他端口启动新服务，检查 `/api/health`、版本列表、Release/Beta `/latest`、两个 macOS 平台和下载目录。按 [分发部署文档](DISTRIBUTION.md) 配置 OpenResty/Cloudflare；若使用 `DIST_SERVER`，则确认外部分发路径实际存在。
 5. 在预演库检查管理员撤销/恢复、强制更新和删除重试。不要使用旧生产事件进行测试发布，以免把预演变更与最终数据混淆。
 
 ## 最终切换
@@ -63,4 +63,4 @@ axolotl-server db verify --source /backup/update-server.db
 
 `APP_ENV` 替代 `FLASK_ENV`；移除 Flask `SECRET_KEY`、`UPLOAD_TOKEN`、安装包物理保留相关配置和大文件下载上限。保留有效的 DATABASE_URL、DIST_ROOT、PUBLIC_BASE_URL、DIST_SERVER、Webhook、管理密钥、缓存、代理和签名下载超时配置。
 
-旧 `/api/artifacts/*` 返回 404。`/api/admin/stats` 现为新的统计 dashboard 接口，响应结构见 `STATS_API.md`。所有历史本地包服务及 GitHub 回退删除。数据库 v1 视图保持兼容，新增 v2 视图需单独授权。
+旧 `/api/artifacts/*` 返回 404。`/api/admin/stats` 现为新的统计 dashboard 接口，响应结构见 `STATS_API.md`。本地包服务、各渠道 3 份保留与 GitHub 缺失回退已经恢复，导入本身不会复制历史安装包，使用 `dist sync` 回填。数据库 v1 视图保持兼容，新增 v2 视图需单独授权。

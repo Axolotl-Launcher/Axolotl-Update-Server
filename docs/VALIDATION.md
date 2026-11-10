@@ -67,3 +67,15 @@ TEST_POSTGRES_URL='<测试管理员连接串>' go test ./internal/analytics -run
 本机没有 Docker 或 Nginx/Caddy 可执行环境，未本地构建容器或启动反向代理。已提供 Linux CI 的 Docker 构建步骤及两种数据库测试；实际 CI 运行需推送后查看。TLS、真实 CDN 缓存键和真实安装包分发需要部署环境验证。
 
 发布构建使用 `-ldflags="-s -w"`。本机旧 TDM-GCC 生成的大型带调试信息可执行文件出现 Windows 加载失败，剥离调试信息后的发布二进制和 `go run` 均已验证；开发调试建议使用新的 MinGW 工具链。
+
+## 2026-11-10 本地包分发恢复
+
+已通过 SQLite 与临时 PostgreSQL（localhost:55432）的完整 `go test -race ./...`、`go vet ./...`、发布二进制编译与 `--help` 冒烟检查。测试新增以下覆盖：
+
+- Release/Beta 按 SemVer 最近各 3 个 published 版本保留；旧包删除而元数据/清单仍在；`dist sync` 仅回填保留集。
+- 已知已发布包缺失时 302 GitHub；未知/私有文件和缺失 revoked 文件不回退；GET/HEAD、Range/If-Range、ETag/304 和 416 缓存策略。
+- Cloudflare IPv4/IPv6、可信内部代理链、直连和伪造 CF/XFF 头拒绝、可选源站密钥，以及分发限制不影响 `/latest`。
+- 下载截断、超长、错误摘要、HTTP 错误、重试截断暂存文件；发布下载失败/校验失败/提交失败不遗留公开包或暂存文件。
+- force update 修改清单后旧 ETag 不会错误返回 304，清单不再使用 immutable 缓存。
+
+应用网络下载测试使用本机 fixture HTTP 服务，发布集成测试使用受控的下载替身并执行真实磁盘摘要校验，不下载真实 GitHub 安装包。未连接生产服务器修改 OpenResty 或 Cloudflare；提供基于用户现有配置的示例和部署验收命令，线上 `nginx -t`、CF HIT/Range 和橙云访问需部署后验证。
