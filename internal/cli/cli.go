@@ -21,7 +21,7 @@ import (
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | analytics maintain [--dry-run]\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
+		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | dist {sync|prune} | analytics maintain [--dry-run]\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
 		return e
 	}
 	c, e := config.Load()
@@ -35,6 +35,28 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	defer s.Close()
 	if args[0] == "serve" {
 		return serve(ctx, s, c)
+	}
+	if args[0] == "dist" && len(args) == 2 {
+		if e = s.CheckSchema(ctx); e != nil {
+			return e
+		}
+		svc := service.New(s, c)
+		switch args[1] {
+		case "sync":
+			versions, e := svc.SyncDist(ctx)
+			if e != nil {
+				return e
+			}
+			return json.NewEncoder(out).Encode(map[string]any{"synced_versions": versions})
+		case "prune":
+			files, e := svc.PruneDist(ctx)
+			if e != nil {
+				return e
+			}
+			return json.NewEncoder(out).Encode(map[string]any{"removed_files": files})
+		default:
+			return errors.New("unknown dist command; use dist sync or dist prune")
+		}
 	}
 	if args[0] == "analytics" && len(args) >= 2 && args[1] == "maintain" {
 		flags := flag.NewFlagSet("analytics maintain", flag.ContinueOnError)
@@ -195,7 +217,11 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 	} else {
 		close(maintenanceDone)
 	}
-	api := httpapi.New(service.New(s, c), observer)
+	svc := service.New(s, c)
+	if _, e := svc.PruneDist(ctx); e != nil {
+		return fmt.Errorf("distribution retention: %w", e)
+	}
+	api := httpapi.New(svc, observer)
 	api.Collector = collector
 	server := &http.Server{Addr: net.JoinHostPort(c.Host, c.Port), Handler: api.Router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	errCh := make(chan error, 1)

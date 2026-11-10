@@ -216,7 +216,7 @@ func ReadLegacy(ctx context.Context, path string) (Snapshot, ImportReport, error
 	report.Artifacts = len(snap.Artifacts)
 	report.Events = len(snap.Events)
 	report.Audits = len(snap.Audits)
-	report.Warnings = append(report.Warnings, "Local package files and legacy usage statistics are not imported; configure DIST_SERVER for package delivery.")
+	report.Warnings = append(report.Warnings, "Local package files and legacy usage statistics are not imported; run dist sync for retained local packages or configure DIST_SERVER.")
 	if err := tx.Commit(); err != nil {
 		return snap, report, err
 	}

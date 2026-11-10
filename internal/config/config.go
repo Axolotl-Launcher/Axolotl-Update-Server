@@ -16,6 +16,8 @@ import (
 type Config struct {
 	Env, DatabaseURL, DistRoot, PublicBaseURL, DistServer, Host, Port string
 	AdminToken, WebhookSecret                                         string
+	DistCloudflareOnly                                                bool
+	DistOriginSecret                                                  string
 	TrustedProxyCIDRs                                                 []string
 	MaxBodyBytes                                                      int64
 	WebhookMaxAge, LatestCacheTTL                                     time.Duration
@@ -23,6 +25,7 @@ type Config struct {
 	RateLimit                                                         int
 	DownloadConnectTimeout, DownloadReadTimeout                       time.Duration
 	DownloadRetries                                                   int
+	ArtifactDownloadTimeout                                           time.Duration
 	AnalyticsEnabled                                                  bool
 	AnalyticsQueueSize, AnalyticsBatchSize                            int
 	AnalyticsFlushInterval, AnalyticsShutdownTimeout                  time.Duration
@@ -44,13 +47,28 @@ func Default() Config {
 	return Config{Env: "development", DatabaseURL: "sqlite://instance/update-server.db", DistRoot: "dist", PublicBaseURL: "https://update.axlmc.org", Host: "127.0.0.1", Port: "8082",
 		TrustedProxyCIDRs: []string{"127.0.0.1/32", "::1/128"}, MaxBodyBytes: 512 << 20,
 		WebhookMaxAge: 300 * time.Second, LatestCacheTTL: 30 * time.Second, RateLimit: 120,
-		DownloadConnectTimeout: 10 * time.Second, DownloadReadTimeout: 60 * time.Second, DownloadRetries: 3,
+		DownloadConnectTimeout: 10 * time.Second, DownloadReadTimeout: 60 * time.Second, DownloadRetries: 3, ArtifactDownloadTimeout: 30 * time.Minute, DistCloudflareOnly: true,
 		AnalyticsEnabled: true, AnalyticsQueueSize: 10000, AnalyticsBatchSize: 500, AnalyticsFlushInterval: time.Second, AnalyticsShutdownTimeout: 10 * time.Second, StatsQueryTimeout: 15 * time.Second}
 }
 
 func Load() (Config, error) {
 	_ = godotenv.Load()
 	c := Default()
+	c.DistOriginSecret = os.Getenv("DIST_ORIGIN_SECRET")
+	if raw, ok := os.LookupEnv("DIST_CLOUDFLARE_ONLY"); ok {
+		b, e := strconv.ParseBool(raw)
+		if e != nil {
+			return c, fmt.Errorf("DIST_CLOUDFLARE_ONLY must be a boolean")
+		}
+		c.DistCloudflareOnly = b
+	}
+	if raw, ok := os.LookupEnv("GITHUB_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS"); ok {
+		n, e := strconv.Atoi(raw)
+		if e != nil || n < 1 || n > 86400 {
+			return c, fmt.Errorf("GITHUB_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS must be between 1 and 86400")
+		}
+		c.ArtifactDownloadTimeout = time.Duration(n) * time.Second
+	}
 	c.GeoIPCityDB = os.Getenv("ANALYTICS_GEOIP_CITY_DB")
 	c.GeoIPASNDB = os.Getenv("ANALYTICS_GEOIP_ASN_DB")
 	if raw, ok := os.LookupEnv("ANALYTICS_INCLUDE_STATS_REQUESTS"); ok {
@@ -120,6 +138,12 @@ func Load() (Config, error) {
 func (c *Config) Validate() error {
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
+	}
+	if c.ArtifactDownloadTimeout <= 0 {
+		return fmt.Errorf("invalid artifact download timeout")
+	}
+	if c.DistOriginSecret != "" && (len(c.DistOriginSecret) < 32 || strings.ContainsAny(c.DistOriginSecret, " \t\r\n")) {
+		return fmt.Errorf("DIST_ORIGIN_SECRET must contain at least 32 characters without whitespace")
 	}
 	if c.Env != "development" && c.Env != "test" && c.Env != "production" {
 		return fmt.Errorf("APP_ENV must be development, test or production")

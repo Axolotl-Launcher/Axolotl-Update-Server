@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/model"
@@ -78,6 +79,7 @@ func (v *Server) changeState(c *gin.Context, restore bool) {
 		v.fail(c, e)
 		return
 	}
+	v.pruneDist(c)
 	c.Header("Cache-Control", "no-store")
 	v.respond(c, 200, out)
 }
@@ -104,8 +106,15 @@ func (v *Server) deleteVersion(c *gin.Context) {
 		v.fail(c, e)
 		return
 	}
+	v.pruneDist(c)
 	c.Header("Cache-Control", "no-store")
 	v.respond(c, 200, out)
+}
+
+func (v *Server) pruneDist(c *gin.Context) {
+	if _, e := v.Service.PruneDist(c.Request.Context()); e != nil {
+		slog.Warn("distribution retention incomplete; retry dist prune", "error", e)
+	}
 }
 func (v *Server) cleanupVersion(c *gin.Context) {
 	meta, _, ok := v.adminBody(c, false)

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/hmac"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -176,6 +178,17 @@ func (v *Server) catalogResponse(c *gin.Context, p gin.H) {
 }
 
 func (v *Server) dist(c *gin.Context) {
+	// Errors, redirects and mutable manifests must never inherit package caching.
+	c.Header("Cache-Control", "no-store")
+	c.Header("Cloudflare-CDN-Cache-Control", "no-store")
+	if v.Service.Config.DistCloudflareOnly && !v.ip.ViaCloudflare(c.Request.RemoteAddr, c.GetHeader("X-Forwarded-For")) {
+		v.fail(c, domain.Err("cloudflare_required", "Distribution is only available through Cloudflare.", 403))
+		return
+	}
+	if secret := v.Service.Config.DistOriginSecret; secret != "" && !hmac.Equal([]byte(secret), []byte(c.GetHeader("X-Axolotl-Origin-Secret"))) {
+		v.fail(c, domain.Err("invalid_origin_secret", "Distribution origin authentication failed.", 403))
+		return
+	}
 	version := c.Param("version")
 	filename := strings.TrimPrefix(c.Param("filename"), "/")
 	for _, part := range append([]string{version}, strings.Split(filename, "/")...) {
@@ -210,22 +223,52 @@ func (v *Server) dist(c *gin.Context) {
 		c.Redirect(302, base.String())
 		return
 	}
-	if filename != "manifest.json" {
-		v.fail(c, domain.Err("artifact_not_found", "The requested artifact does not exist.", 404))
-		return
-	}
 	if _, e := domain.ParseVersion(version); e != nil {
 		v.fail(c, domain.Err("artifact_not_found", "The requested artifact does not exist.", 404))
 		return
 	}
-	// Rebuild/management validates paths as well; do not follow a directory or manifest link here.
-	path, e := v.Service.ManifestPath(version)
+	item, e := v.Service.Version(c.Request.Context(), version)
+	if e != nil {
+		v.fail(c, e)
+		return
+	}
+	if item.Status != "published" && item.Status != "revoked" {
+		v.fail(c, domain.Err("artifact_not_found", "The requested artifact does not exist.", 404))
+		return
+	}
+	var artifact *model.Artifact
+	if filename != "manifest.json" {
+		for i := range item.Artifacts {
+			a := &item.Artifacts[i]
+			public := a.IsPublic
+			if a.Kind == "signature" {
+				for _, parent := range item.Artifacts {
+					if parent.IsPublic && parent.SignatureFilename != nil && *parent.SignatureFilename == a.Filename {
+						public = true
+					}
+				}
+			}
+			if a.Filename == filename && public && domain.ArtifactValid(item, *a) {
+				artifact = a
+				break
+			}
+		}
+		if artifact == nil {
+			v.fail(c, domain.Err("artifact_not_found", "The requested artifact does not exist.", 404))
+			return
+		}
+	}
+	path, e := v.Service.ArtifactPath(version, filename)
 	if e != nil {
 		v.fail(c, e)
 		return
 	}
 	f, e := os.Open(path)
 	if e != nil {
+		if os.IsNotExist(e) && artifact != nil && item.Status == "published" && item.ReleaseTag == "v"+item.Version && item.ReleaseID != "" {
+			c.Redirect(http.StatusFound, service.GitHubAssetURL(item.ReleaseTag, filename))
+			return
+		}
 		v.fail(c, domain.Err("artifact_not_found", "The requested artifact does not exist.", 404))
 		return
 	}
@@ -235,6 +278,30 @@ func (v *Server) dist(c *gin.Context) {
 		v.fail(c, e)
 		return
 	}
-	c.Header("Cache-Control", "public, max-age=31536000, immutable")
-	http.ServeContent(c.Writer, c.Request, "manifest.json", st.ModTime(), f)
+	if !st.Mode().IsRegular() || (artifact != nil && st.Size() != artifact.Size) {
+		v.fail(c, domain.Err("artifact_unavailable", "Local artifact does not match metadata.", 503))
+		return
+	}
+	if artifact != nil {
+		c.Header("ETag", `"sha256-`+strings.ToLower(artifact.SHA256)+`"`)
+		c.Header("Content-Type", artifact.ContentType)
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Cache-Control", "public, max-age=3600, s-maxage=86400, must-revalidate")
+		c.Header("Cloudflare-CDN-Cache-Control", "public, max-age=86400, must-revalidate")
+	} else {
+		// Force-update and restore modify manifests at the same URL.
+		c.Header("Cache-Control", "no-cache, max-age=0, must-revalidate")
+		c.Header("ETag", fmt.Sprintf(`W/"%x-%x"`, st.ModTime().UnixNano(), st.Size()))
+	}
+	http.ServeContent(distContentWriter{c.Writer}, c.Request, filename, st.ModTime(), f)
+}
+
+type distContentWriter struct{ http.ResponseWriter }
+
+func (w distContentWriter) WriteHeader(status int) {
+	if status >= 400 {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Cloudflare-CDN-Cache-Control", "no-store")
+	}
+	w.ResponseWriter.WriteHeader(status)
 }

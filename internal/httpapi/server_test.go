@@ -32,8 +32,18 @@ func setup(t *testing.T) (*Server, *service.Service) {
 	c.AdminToken = "admin"
 	c.WebhookSecret = "webhook"
 	c.RateLimit = 0
+	c.DistCloudflareOnly = false
 	svc := service.New(s, c)
 	svc.FetchSignature = func(_ context.Context, _ string, _ int64, _ string) (string, error) { return "tauri-signature", nil }
+	svc.FetchArtifact = func(_ context.Context, value string, _ int64, _ string, target string) error {
+		body := "package"
+		if strings.HasSuffix(value, ".sig") {
+			body = "tauri-signature"
+		} else if strings.HasSuffix(value, "installer.exe") {
+			body = "installer"
+		}
+		return os.WriteFile(target, []byte(body), 0644)
+	}
 	return New(svc, nil), svc
 }
 func call(api *Server, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -147,7 +157,7 @@ func TestReleaseLifecycle(t *testing.T) {
 		t.Fatal(w.Code, w.Body)
 	}
 	w = call(api, "GET", "/dist/1.9.4/installer.exe", "", nil)
-	if w.Code != 404 {
+	if w.Code != 200 || w.Body.String() != "installer" {
 		t.Fatal(w.Code)
 	}
 	w = call(api, "DELETE", "/api/admin/versions/1.9.4", "", admin)

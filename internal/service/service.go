@@ -34,6 +34,7 @@ type Service struct {
 	Config            config.Config
 	Now               func() time.Time
 	FetchSignature    func(context.Context, string, int64, string) (string, error)
+	FetchArtifact     func(context.Context, string, int64, string, string) error
 	BeforeCommit      func(string) error // Fault-injection seam; nil in production.
 	RemoveAll         func(string) error
 	mu                sync.Mutex
@@ -47,6 +48,7 @@ type Service struct {
 func New(s *store.Store, c config.Config) *Service {
 	v := &Service{Store: s, Config: c, Now: func() time.Time { return time.Now().UTC() }, RemoveAll: os.RemoveAll, busy: map[string]bool{}, cache: map[string]cacheEntry{}}
 	v.FetchSignature = v.fetchSignature
+	v.FetchArtifact = v.fetchArtifact
 	return v
 }
 func (s *Service) Lock(version string) (func(), error) {

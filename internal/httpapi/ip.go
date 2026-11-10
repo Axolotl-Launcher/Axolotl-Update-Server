@@ -38,6 +38,44 @@ func (r *IPResolver) TrustedPeer(remote string) bool {
 	ip, e := netip.ParseAddr(host)
 	return e == nil && contains(r.trusted, ip.Unmap())
 }
+
+// ViaCloudflare stops at the first non-local-proxy hop, before resolving the
+// visitor IP. CF-Connecting-IP/CF-Ray are not proof of a Cloudflare connection.
+func (r *IPResolver) ViaCloudflare(remote, forwarded string) bool {
+	host, _, e := net.SplitHostPort(remote)
+	if e != nil {
+		host = remote
+	}
+	peer, e := netip.ParseAddr(host)
+	if e != nil {
+		return false
+	}
+	peer = peer.Unmap()
+	if contains(r.cloudflare, peer) {
+		return true
+	}
+	if !contains(r.trusted, peer) || forwarded == "" {
+		return false
+	}
+	values := strings.Split(forwarded, ",")
+	if len(values) > 64 {
+		return false
+	}
+	for i := len(values) - 1; i >= 0; i-- {
+		next, e := netip.ParseAddr(strings.TrimSpace(values[i]))
+		if e != nil {
+			return false
+		}
+		next = next.Unmap()
+		if contains(r.cloudflare, next) {
+			return true
+		}
+		if !contains(r.trusted, next) {
+			return false
+		}
+	}
+	return false
+}
 func (r *IPResolver) Resolve(remote, forwarded, cf string) string {
 	host, _, e := net.SplitHostPort(remote)
 	if e != nil {

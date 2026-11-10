@@ -24,3 +24,33 @@ func TestProductionAndDistValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestDistConfig(t *testing.T) {
+	c := Default()
+	if !c.DistCloudflareOnly {
+		t.Fatal("Cloudflare guard must default on")
+	}
+	c.DistOriginSecret = "short"
+	if c.Validate() == nil {
+		t.Fatal("short secret accepted")
+	}
+	c.DistOriginSecret = "0123456789abcdef0123456789abcdef"
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	t.Setenv("DIST_CLOUDFLARE_ONLY", "false")
+	t.Setenv("DIST_ORIGIN_SECRET", "")
+	t.Setenv("GITHUB_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS", "120")
+	c, e := Load()
+	if e != nil || c.DistCloudflareOnly || c.ArtifactDownloadTimeout.Seconds() != 120 {
+		t.Fatal(c.DistCloudflareOnly, c.ArtifactDownloadTimeout, e)
+	}
+	for _, key := range []string{"DIST_CLOUDFLARE_ONLY", "GITHUB_ARTIFACT_DOWNLOAD_TIMEOUT_SECONDS"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "invalid")
+			if _, e := Load(); e == nil {
+				t.Fatal("invalid config accepted", key)
+			}
+		})
+	}
+}

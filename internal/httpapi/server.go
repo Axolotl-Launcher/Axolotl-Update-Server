@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/analytics"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/config"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/service"
 	"github.com/gin-gonic/gin"
@@ -44,7 +45,11 @@ func New(s *service.Service, observer Observer) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil)
-	v := &Server{Service: s, Router: r, observer: observer, ip: NewIPResolver(s.Config.TrustedProxyCIDRs), buckets: map[string]bucket{}}
+	proxyCIDRs := append([]string(nil), s.Config.TrustedProxyCIDRs...)
+	if s.Config.DistCloudflareOnly {
+		proxyCIDRs = append(proxyCIDRs, config.CloudflareCIDRs...)
+	}
+	v := &Server{Service: s, Router: r, observer: observer, ip: NewIPResolver(proxyCIDRs), buckets: map[string]bucket{}}
 	v.statistics = &analytics.Statistics{Store: s.Store}
 	v.statsGate = make(chan struct{}, 2)
 	r.RedirectTrailingSlash = false
@@ -91,6 +96,10 @@ func (v *Server) middleware() gin.HandlerFunc {
 		body := &countedBody{ReadCloser: c.Request.Body}
 		c.Request.Body = body
 		c.Set("analytics_include_stats", v.Service.Config.AnalyticsIncludeStatsRequests)
+		if strings.HasPrefix(c.Request.URL.Path, "/dist/") {
+			c.Header("Cache-Control", "no-store")
+			c.Header("Cloudflare-CDN-Cache-Control", "no-store")
+		}
 		scheme := "http"
 		if c.Request.TLS != nil {
 			scheme = "https"

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -132,7 +133,14 @@ func (s *Service) Publish(ctx context.Context, raw []byte) (result map[string]an
 	if e != nil {
 		return nil, e
 	}
-	defer unlock()
+	defer func() {
+		unlock()
+		if err == nil && s.Config.DistServer == "" {
+			if _, cleanupErr := s.PruneDist(ctx); cleanupErr != nil {
+				slog.Warn("distribution retention incomplete; retry dist prune", "error", cleanupErr)
+			}
+		}
+	}()
 	if e = s.EnsureCleanup(p.Version); e != nil {
 		return nil, e
 	}
@@ -179,6 +187,14 @@ func (s *Service) Publish(ctx context.Context, raw []byte) (result map[string]an
 	prepared, published, e := s.prepare(ctx, p)
 	if e != nil {
 		return nil, e
+	}
+	var staged string
+	if s.Config.DistServer == "" {
+		staged, e = s.stageArtifacts(ctx, p.Version, p.Tag, prepared)
+		if e != nil {
+			return nil, e
+		}
+		defer os.RemoveAll(staged)
 	}
 	s.commitMu.Lock()
 	defer s.commitMu.Unlock()
@@ -269,6 +285,15 @@ func (s *Service) Publish(ctx context.Context, raw []byte) (result map[string]an
 	if e != nil {
 		return nil, e
 	}
+	undo, e := s.installArtifacts(p.Version, staged, prepared)
+	if e != nil {
+		return nil, e
+	}
+	defer func() {
+		if err != nil {
+			undo()
+		}
+	}()
 	if e = atomicWrite(path, data); e != nil {
 		return nil, domain.Err("webhook_failed", "Could not write version manifest.", 500)
 	}
@@ -327,7 +352,7 @@ func (s *Service) prepare(ctx context.Context, p ReleasePayload) ([]model.Artifa
 	}
 	files := map[string]CatalogFile{}
 	for _, f := range c.Files {
-		if !domain.SafeComponent(f.Filename) {
+		if !domain.SafeComponent(f.Filename) || f.Filename == "manifest.json" {
 			return nil, zero, domain.Err("invalid_filename", "Filename must be a single safe path component.")
 		}
 		asset, ok := assets[f.Filename]
@@ -488,16 +513,7 @@ func (s *Service) fetchSignature(ctx context.Context, value string, size int64, 
 	}
 	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: s.Config.DownloadConnectTimeout}).DialContext, TLSHandshakeTimeout: s.Config.DownloadConnectTimeout, ResponseHeaderTimeout: s.Config.DownloadReadTimeout}
 	defer transport.CloseIdleConnections()
-	client := http.Client{Transport: transport, Timeout: s.Config.DownloadReadTimeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) > 3 {
-			return fmt.Errorf("too many redirects")
-		}
-		host := req.URL.Hostname()
-		if req.URL.Scheme != "https" || (host != "github.com" && host != "release-assets.githubusercontent.com" && host != "objects.githubusercontent.com") {
-			return fmt.Errorf("untrusted asset redirect")
-		}
-		return nil
-	}}
+	client := http.Client{Transport: transport, Timeout: s.Config.DownloadReadTimeout, CheckRedirect: assetRedirect}
 	for attempt := 0; attempt <= s.Config.DownloadRetries; attempt++ {
 		req, e := http.NewRequestWithContext(ctx, http.MethodGet, value, nil)
 		if e != nil {
