@@ -94,7 +94,7 @@ axolotl-server analytics maintain
 - 移除旧上传接口 `/api/artifacts/*`；`/api/admin/stats` 使用新统计 API v2 结构。
 - 恢复本地安装包服务：发布时流式下载、校验大小与 SHA-256，Release/Beta 各保留 3 个已发布版本的包，旧包回收保留数据库和清单。
 - 导入数据仍使用元数据判断制品可用性。`DIST_SERVER` 为空时提供本地包，已知已发布制品缺失则 302 到 GitHub；历史最近版本用 `dist sync` 回填。
-- `/dist/*` 默认要求 Cloudflare 来源；本地调试设 `DIST_CLOUDFLARE_ONLY=false`。安装包浏览器缓存 1 小时、CDN 1 天；可变清单不做 CDN 缓存。
+- `/dist/*` 默认要求 Cloudflare 来源；本地调试设 `DIST_CLOUDFLARE_ONLY=false`。安装包浏览器缓存 1 小时、CDN 1 年并声明 immutable；可变清单不做 CDN 缓存。
 - 保留本地清单、强制更新的原子替换，以及删除文件的隔离和重试。
 - 统计保留查询参数白名单，记录 HTTP/性能/字节指标，但不保存请求体、认证信息、完整 URL 或任意参数。
 

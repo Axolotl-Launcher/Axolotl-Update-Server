@@ -286,8 +286,8 @@ func (v *Server) dist(c *gin.Context) {
 		c.Header("ETag", `"sha256-`+strings.ToLower(artifact.SHA256)+`"`)
 		c.Header("Content-Type", artifact.ContentType)
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("Cache-Control", "public, max-age=3600, s-maxage=86400, must-revalidate")
-		c.Header("Cloudflare-CDN-Cache-Control", "public, max-age=86400, must-revalidate")
+		c.Header("Cache-Control", "public, max-age=3600, s-maxage=31536000, immutable")
+		c.Header("Cloudflare-CDN-Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		// Force-update and restore modify manifests at the same URL.
 		c.Header("Cache-Control", "no-cache, max-age=0, must-revalidate")

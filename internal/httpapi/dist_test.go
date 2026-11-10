@@ -67,7 +67,7 @@ func TestDistCacheRangeFallbackAndVisibility(t *testing.T) {
 	path := "/dist/1.2.3/installer.exe"
 	w := call(api, "GET", path, "", nil)
 	etag := w.Header().Get("ETag")
-	if w.Code != 200 || w.Body.String() != "installer" || etag == "" || w.Header().Get("Cloudflare-CDN-Cache-Control") != "public, max-age=86400, must-revalidate" {
+	if w.Code != 200 || w.Body.String() != "installer" || etag == "" || w.Header().Get("Cloudflare-CDN-Cache-Control") != "public, max-age=31536000, immutable" || w.Header().Get("Cache-Control") != "public, max-age=3600, s-maxage=31536000, immutable" {
 		t.Fatal(w.Code, w.Header(), w.Body)
 	}
 	for _, tc := range []struct {

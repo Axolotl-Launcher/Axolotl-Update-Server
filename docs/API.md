@@ -96,7 +96,7 @@ ETag 由响应字段计算，匹配 `If-None-Match` 返回 304。缓存默认 30
 
 302 为 `no-store`。拒绝不安全路径、自指向配置或运行时循环。`DIST_SERVER` 为空时优先提供本地安装包，支持 HEAD、ETag、Range、If-Range；已知公开且已发布的 GitHub 制品缺失时回退到对应 GitHub Release。未知/私有制品或缺失的撤销版本制品不回退。
 
-默认 `DIST_CLOUDFLARE_ONLY=true`，未经过 Cloudflare 的 `/dist/*` 返回 `403 cloudflare_required`；可选 `DIST_ORIGIN_SECRET` 不匹配返回 `403 invalid_origin_secret`。本地调试可关闭来源限制。安装包 `Cache-Control: public, max-age=3600, s-maxage=86400, must-revalidate`，Cloudflare 专用头为 `public, max-age=86400, must-revalidate`；清单为 `no-cache, max-age=0, must-revalidate` 且 CDN `no-store`，不再 immutable。错误/重定向均 `no-store`。完整部署和保留策略见 [本地分发与 Cloudflare](DISTRIBUTION.md)。
+默认 `DIST_CLOUDFLARE_ONLY=true`，未经过 Cloudflare 的 `/dist/*` 返回 `403 cloudflare_required`；可选 `DIST_ORIGIN_SECRET` 不匹配返回 `403 invalid_origin_secret`。本地调试可关闭来源限制。安装包 `Cache-Control: public, max-age=3600, s-maxage=31536000, immutable`，Cloudflare 专用头为 `public, max-age=31536000, immutable`，允许 CDN 缓存一年，同一版本文件 URL 必须永久对应相同字节；清单为 `no-cache, max-age=0, must-revalidate` 且 CDN `no-store`，不再 immutable。错误/重定向均 `no-store`。完整部署和保留策略见 [本地分发与 Cloudflare](DISTRIBUTION.md)。
 
 ## Release Webhook
 

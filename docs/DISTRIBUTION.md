@@ -50,11 +50,11 @@ Cloudflare IP 白名单证明请求来自其网络，不能绑定你自己的 Zo
 
 | 响应 | Cache-Control | Cloudflare-CDN-Cache-Control |
 | --- | --- | --- |
-| 本地安装包/签名成功响应，包括 206/304 | `public, max-age=3600, s-maxage=86400, must-revalidate` | `public, max-age=86400, must-revalidate` |
+| 本地安装包/签名成功响应，包括 206/304 | `public, max-age=3600, s-maxage=31536000, immutable` | `public, max-age=31536000, immutable` |
 | `manifest.json` | `no-cache, max-age=0, must-revalidate` | `no-store` |
 | GitHub/外部分发 302、403/404/416 等错误 | `no-store` | `no-store` |
 
-浏览器保留安装包 1 小时，Cloudflare 允许缓存 1 天。保留策略只回收源站文件，不主动驱逐 CDN 已缓存的字节；旧版本缓存命中仍可下载，缓存失效回源时才回退到 GitHub。安装包支持基于 SHA-256 的强 ETag，清单使用文件修改时间/大小的弱 ETag。清单会被 force update 修改，因此不再使用旧的一年 immutable 缓存。动态 `/latest` 继续保持已有的 30 秒共享缓存和 Header 变体规则。
+浏览器允许缓存安装包 1 小时，Cloudflare 允许缓存 1 年（31536000 秒），并声明 immutable。前提是发布后同一版本、同一文件名的内容永久不变；即使删除再发布，也不能复用原 URL 分发不同字节，应发布新版本或新文件名。保留策略只回收源站文件，不主动驱逐 CDN 已缓存的字节；旧版本缓存命中仍可下载，缓存失效或被提前淘汰后回源时才回退到 GitHub。TTL 是允许的新鲜期，不保证边缘节点实际保留一年。安装包支持基于 SHA-256 的强 ETag，清单使用文件修改时间/大小的弱 ETag。清单会被 force update 修改，因此不再使用旧的一年 immutable 缓存。动态 `/latest` 继续保持已有的 30 秒共享缓存和 Header 变体规则。
 
 Cloudflare Cache Rule 匹配当前下载域名的 `/dist/` 路径：选择 Eligible for cache，尊重源站缓存头（包括 Cloudflare-CDN-Cache-Control），不要强制覆盖 TTL 或为 302/错误设置正数缓存时间。`manifest.json` 可额外单独设置 Bypass cache，放在能覆盖上述规则的位置。`/api/*` 不加入此规则；`/latest` 的缓存键规则保持现状。
 
