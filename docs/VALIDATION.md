@@ -93,3 +93,9 @@ SQLite、独立临时 PostgreSQL 的完整 `go test -race -count=1 ./...`、`go 
 `DIST_PUBLIC_BASE_URL` 可单独指定公开安装包域名，不配置时兼容 PUBLIC_BASE_URL。测试覆盖 `/latest`、发布生成的本地清单、下载目录和清单 rebuild/verify 均采用 dist 域名，两个域名入口仍提供相同本地包，不进入 DIST_SERVER 跳转模式；错误配置/自跳转校验通过。完整 `go test -race ./...`、`go vet ./...` 与发布编译通过。
 
 额外 OpenResty 站点基于用户现有配置，只提供 `/dist/*`。未修改实际 DNS、证书、Cloudflare 或生产站点；部署需检查证书覆盖 dist.axlmc.org、执行 nginx -t，并验证真实 CDN 访问。
+
+## 2026-11-10 统计维度口径修正
+
+SQLite 与临时 PostgreSQL 完整 race 测试通过，覆盖应用新旧 UA 统一、计算维度的分组/精确筛选/请求详情一致性、无响应体/无错误/不适用区分，以及历史 UA 字典重算的预演、提交后中断续跑与幂等。UA 报告的系统优先于目标平台，均缺失时不伪造系统。`go vet`、发布编译通过；管理端 typecheck/lint 通过。
+
+本地实际 Go 服务（SQLite 8094）经过 AxoAdmin 同源代理和浏览器界面验证：应用直接访问的分布下钻从 5 条收敛为 4 条应用请求，请求详情显示应用、Linux、应用直接访问、无响应体、无错误、不适用。使用本机构造请求，不连接生产统计。

@@ -111,6 +111,11 @@ func Extract(c *gin.Context, at time.Time) (Event, bool) {
 			e.TargetVersion = &version
 		}
 	}
+	if e.ClientVersion == nil {
+		if version := applicationVersion(e.UserAgent); version != "" {
+			e.ClientVersion = &version
+		}
+	}
 	return e, true
 }
 

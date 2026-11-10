@@ -4,16 +4,37 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/domain"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/model"
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/store"
 	ipdb "github.com/ipipdotnet/ipdb-go"
 	"github.com/mileusna/useragent"
 	maxminddb "github.com/oschwald/maxminddb-golang/v2"
 )
+
+const uaClassificationVersion = 1
+
+var axolotlAgent = regexp.MustCompile(`(?i)(?:^|[ (;])axolotl(?:[- ]launcher)?(?:/|\s+)([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)`)
+
+func applicationVersion(raw string) string {
+	if match := axolotlAgent.FindStringSubmatch(raw); len(match) > 1 {
+		return match[1]
+	}
+	if _, err := domain.ParseVersion(strings.TrimSpace(raw)); err == nil {
+		return strings.TrimSpace(raw)
+	}
+	return ""
+}
+
+func applicationAgent(raw string) bool {
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	return axolotlAgent.MatchString(raw) || lower == "axolotl" || lower == "axolotl-launcher" || applicationVersion(raw) != ""
+}
 
 func classifyUA(raw string) userAgent {
 	u := useragent.Parse(raw)
@@ -26,10 +47,21 @@ func classifyUA(raw string) userAgent {
 	}
 	device := "unknown"
 	switch {
+	case applicationAgent(raw):
+		name, device = "Axolotl", "application"
+		u.Version = ""
+		u.Bot = false
+		lower := strings.ToLower(raw)
+		switch {
+		case strings.Contains(lower, "windows"):
+			osName = "Windows"
+		case strings.Contains(lower, "macos") || strings.Contains(lower, "darwin"):
+			osName = "macOS"
+		case strings.Contains(lower, "linux"):
+			osName = "Linux"
+		}
 	case u.Bot:
 		device = "bot"
-	case strings.Contains(strings.ToLower(raw), "axolotl"):
-		device = "application"
 	case strings.HasPrefix(raw, "curl/") || strings.HasPrefix(raw, "Wget/"):
 		device = "cli"
 	case u.Tablet:
@@ -39,7 +71,14 @@ func classifyUA(raw string) userAgent {
 	case u.Desktop:
 		device = "desktop"
 	}
-	return userAgent{UserAgent: raw, Browser: &name, BrowserVersion: model.Ptr(u.Version), OS: &osName, OSVersion: model.Ptr(u.OSVersion), DeviceType: &device, IsBot: model.Ptr(u.Bot)}
+	return userAgent{UserAgent: raw, Browser: &name, BrowserVersion: optionalString(u.Version), OS: &osName, OSVersion: optionalString(u.OSVersion), DeviceType: &device, IsBot: model.Ptr(u.Bot), ClassificationVersion: uaClassificationVersion}
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // Local lookups and cached API results are used by collection. Network fallback

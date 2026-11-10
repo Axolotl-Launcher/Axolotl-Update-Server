@@ -21,7 +21,7 @@ import (
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | dist {sync|prune} | analytics {maintain [--dry-run]|relocate [--start RFC3339 --end RFC3339 --batch-size 500 --pause-ms 100 --after RFC3339 --after-id N --dry-run]}\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
+		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | dist {sync|prune} | analytics {maintain [--dry-run]|reclassify [--batch-size 100 --after-id N --dry-run]|relocate [--start RFC3339 --end RFC3339 --batch-size 500 --pause-ms 100 --after RFC3339 --after-id N --dry-run]}\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
 		return e
 	}
 	c, e := config.Load()
@@ -38,6 +38,28 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if args[0] == "analytics" && len(args) >= 2 && args[1] == "relocate" {
 		return relocate(ctx, args[2:], out, s, c)
+	}
+	if args[0] == "analytics" && len(args) >= 2 && args[1] == "reclassify" {
+		flags := flag.NewFlagSet("analytics reclassify", flag.ContinueOnError)
+		flags.SetOutput(out)
+		batch := flags.Int("batch-size", 100, "UA dictionary rows per short transaction")
+		after := flags.Int64("after-id", 0, "resume after last committed UA id")
+		dryRun := flags.Bool("dry-run", false, "report without changing rows")
+		if e = flags.Parse(args[2:]); e != nil {
+			return e
+		}
+		if flags.NArg() != 0 {
+			return errors.New("unexpected reclassify arguments")
+		}
+		if e = s.CheckSchema(ctx); e != nil {
+			return e
+		}
+		encoder := json.NewEncoder(out)
+		r, e := (&analytics.Storage{Store: s}).Reclassify(ctx, *batch, *after, *dryRun, func(r analytics.ReclassifyReport) error { return encoder.Encode(r) })
+		if e != nil {
+			_ = encoder.Encode(r)
+		}
+		return e
 	}
 	if args[0] == "dist" && len(args) == 2 {
 		if e = s.CheckSchema(ctx); e != nil {

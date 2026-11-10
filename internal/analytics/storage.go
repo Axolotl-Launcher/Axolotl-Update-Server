@@ -38,6 +38,7 @@ type userAgent struct {
 	UserAgent                                          string
 	Browser, BrowserVersion, OS, OSVersion, DeviceType *string
 	IsBot                                              *bool
+	ClassificationVersion                              int
 }
 type Storage struct {
 	Store *store.Store
@@ -131,9 +132,9 @@ func (s *Storage) Write(ctx context.Context, events []Event) error {
 				return fmt.Errorf("user agent hash collision")
 			}
 			ids[row.SHA256] = row.ID
-			if row.Browser == nil {
+			if row.Browser == nil || row.ClassificationVersion < uaClassificationVersion {
 				parsed := classifyUA(row.UserAgent)
-				if e := tx.Table(ut).Where("id = ?", row.ID).Updates(map[string]any{"browser": parsed.Browser, "browser_version": parsed.BrowserVersion, "os": parsed.OS, "os_version": parsed.OSVersion, "device_type": parsed.DeviceType, "is_bot": parsed.IsBot}).Error; e != nil {
+				if e := tx.Table(ut).Where("id = ?", row.ID).Updates(classificationFields(parsed)).Error; e != nil {
 					return e
 				}
 			}

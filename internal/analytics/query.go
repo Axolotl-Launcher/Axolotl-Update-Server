@@ -159,7 +159,11 @@ func ParseQuery(values url.Values, now time.Time) (Query, error) {
 			if value != "4" && value != "6" {
 				return q, badQuery("ip_version must be 4 or 6.")
 			}
-		case "is_bot", "include_updater", "include_revoked":
+		case "include_updater", "include_revoked":
+			if value != "true" && value != "false" && value != "@not_applicable" {
+				return q, badQuery(key + " must be true, false or @not_applicable.")
+			}
+		case "is_bot":
 			if value != "true" && value != "false" {
 				return q, badQuery(key + " must be true or false.")
 			}
@@ -201,7 +205,7 @@ func (q Query) where() (string, []any) {
 		column := Dimensions[key]
 		value := q.Filters[key]
 		var bound any = value
-		if key == "is_bot" || key == "include_updater" || key == "include_revoked" {
+		if key == "is_bot" {
 			bound = value == "true"
 		}
 		parts = append(parts, "("+column+") = ?")

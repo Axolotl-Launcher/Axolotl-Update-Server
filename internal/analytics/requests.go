@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -70,7 +71,15 @@ func (s *Statistics) Requests(ctx context.Context, q Query) (RequestPage, error)
 	if s.Store.Dialect == "postgres" {
 		ip = "host(e.client_ip)"
 	}
-	sql := "SELECT " + requestColumns + ip + " AS client_ip" + s.from() + " WHERE " + where + " ORDER BY e.occurred_at DESC,e.id DESC LIMIT ?"
+	columns := requestColumns
+	for _, name := range []string{"browser", "browser_version", "os", "device_type", "referer_host", "content_type", "error_code"} {
+		raw := "e." + name
+		if name == "browser" || name == "browser_version" || name == "os" || name == "device_type" {
+			raw = "u." + name
+		}
+		columns = strings.Replace(columns, raw+",", Dimensions[name]+" AS "+name+",", 1)
+	}
+	sql := "SELECT " + columns + ip + " AS client_ip" + s.from() + " WHERE " + where + " ORDER BY e.occurred_at DESC,e.id DESC LIMIT ?"
 	args = append(args, q.Limit+1)
 	if e := s.Store.DB.WithContext(ctx).Raw(sql, args...).Scan(&out.Items).Error; e != nil {
 		return out, e

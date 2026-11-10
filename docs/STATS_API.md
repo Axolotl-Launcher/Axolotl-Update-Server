@@ -118,6 +118,26 @@ curl -sS -G -H "Authorization: Bearer $ADMIN_TOKEN" \
   'http://127.0.0.1:8082/api/admin/stats/requests'
 ```
 
+## 维度中的空值与应用识别
+
+统计分布及精确筛选使用相同的计算规则。`Axolotl-Launcher/<版本> (<系统>)`、旧 `axolotl/<版本>`、`Axolotl Launcher/<版本>` 和仅 SemVer 的应用 UA 统一为 `browser=Axolotl`、`device_type=application`；浏览器版本不再混入应用版本，而是统一 `@application`。新采集可从应用 UA 提取客户端版本，原始 User-Agent 不改写。`/latest` 已有平台和客户端版本、且 UA 未识别或明确为 Tauri 时也可识别应用。操作系统优先 UA，其次该应用请求的更新平台，均没有时为 `@not_provided`，不推断具体系统版本。
+
+| 维度 | 特殊筛选值 | 含义 |
+| --- | --- | --- |
+| browser | `Axolotl` | 应用 |
+| browser_version | `@application` | 应用，不适用浏览器版本 |
+| os | `@not_provided` | 应用没有提供可识别系统 |
+| referer_host | `@application` / `@direct` | 无引荐域名的应用直接访问 / 其他直接访问 |
+| content_type | `@empty` | 204/304，或确实没有响应体的非 HEAD 请求 |
+| error_code | `@none` / `@http_error` | 状态码小于 400 且无业务错误 / HTTP 错误但没有业务错误码 |
+| include_updater、include_revoked | `@not_applicable` | 非下载目录接口，此参数不适用 |
+
+特殊值只用于统计 API 的分组、筛选与明细展示，不写入原始事件列，不伪造域名、MIME 或原始布尔值。请求明细的 include 两字段继续为 boolean/null，调用方根据 route 判断不适用；其他上述明细字段使用与分布相同的值。PostgreSQL 只读视图仍暴露原始字段。
+
+缺少 Referer 本身不代表数据采集失败；204/304 没有响应体也不应标未知。无状态码的老记录不能判断是否成功，下载目录内未采集/无效的参数不能反推默认 false，因此这些情况保留 null。Content-Type 仅代表响应体格式，不是请求的 Accept 或 Content-Type。
+
+部署后先执行 `db migrate`（新增 UA 分类版本字段），再执行 `analytics reclassify`，可在 server 运行时重算去重 UA 字典，历史事件的客户端、来源与设备分类随之更新。支持 `--dry-run`、`--batch-size 100` 和 `--after-id <最后成功ID>`，重复运行只处理旧分类版本；新写入的旧 UA 也会自动更新分类。不重写事件时间/流量，不触发地理查询，缺失的历史操作系统信息无法恢复。
+
 ## 国家、城市和 ASN
 
 采用与 hjfunnyMC 后端一致的数据源顺序：中国 IP 优先纯真 `qqwry.ipdb`，其余使用 MaxMind，缺少省市时可选 ip-api 兜底。国家/洲保持两位代码（如 CN/AS），省市优先中文。详见 [IP 属地配置与历史重算](GEOIP.md)。

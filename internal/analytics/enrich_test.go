@@ -23,3 +23,21 @@ func TestGeoIPOptionalAndBadPath(t *testing.T) {
 		t.Fatal("invalid path accepted")
 	}
 }
+
+func TestApplicationUAClassification(t *testing.T) {
+	for _, tc := range []struct{ raw, os, version string }{
+		{"axolotl/1.10.0", "Unknown", "1.10.0"},
+		{"Axolotl Launcher/1.10.5 (windows)", "Windows", "1.10.5"},
+		{"Axolotl-Launcher/1.10.5 (macos)", "macOS", "1.10.5"},
+		{"Axolotl-Launcher/1.10.5 (linux)", "Linux", "1.10.5"},
+		{"1.10.5", "Unknown", "1.10.5"},
+	} {
+		u := classifyUA(tc.raw)
+		if *u.Browser != "Axolotl" || u.BrowserVersion != nil || *u.DeviceType != "application" || *u.OS != tc.os || applicationVersion(tc.raw) != tc.version {
+			t.Fatalf("%s: %+v", tc.raw, u)
+		}
+	}
+	if applicationAgent("Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36") || applicationAgent("https://axolotl.example") {
+		t.Fatal("misclassified browser or URL")
+	}
+}

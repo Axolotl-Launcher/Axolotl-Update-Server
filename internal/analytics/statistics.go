@@ -197,7 +197,7 @@ func (s *Statistics) dimension(name string) string {
 	if name == "client_ip" && s.Store.Dialect == "postgres" {
 		column = "host(e.client_ip)"
 	}
-	if name == "is_bot" || name == "include_updater" || name == "include_revoked" {
+	if name == "is_bot" {
 		return "CASE WHEN " + column + " IS NULL THEN NULL WHEN " + column + " THEN 'true' ELSE 'false' END"
 	}
 	return "CAST((" + column + ") AS TEXT)"

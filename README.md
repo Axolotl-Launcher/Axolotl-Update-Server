@@ -88,6 +88,8 @@ axolotl-server analytics maintain --dry-run
 axolotl-server analytics maintain
 axolotl-server analytics relocate --dry-run
 axolotl-server analytics relocate
+axolotl-server analytics reclassify --dry-run
+axolotl-server analytics reclassify
 ```
 
 导入、重建和文件维护命令在停止服务后执行。`analytics relocate` 支持服务运行期间分批重算历史 IP 属地；服务本身会在启动时和运行期间维护统计保留数据，无需额外调度。
