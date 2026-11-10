@@ -21,7 +21,7 @@ import (
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | dist {sync|prune} | analytics maintain [--dry-run]\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
+		_, e := fmt.Fprintln(out, "Usage: axolotl-server serve | db {migrate|status|import-legacy|verify} | manifests rebuild | dist {sync|prune} | analytics {maintain [--dry-run]|relocate [--start RFC3339 --end RFC3339 --batch-size 500 --pause-ms 100 --after RFC3339 --after-id N --dry-run]}\nConfigure DATABASE_URL and DIST_ROOT through environment variables or .env.")
 		return e
 	}
 	c, e := config.Load()
@@ -35,6 +35,9 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	defer s.Close()
 	if args[0] == "serve" {
 		return serve(ctx, s, c)
+	}
+	if args[0] == "analytics" && len(args) >= 2 && args[1] == "relocate" {
+		return relocate(ctx, args[2:], out, s, c)
 	}
 	if args[0] == "dist" && len(args) == 2 {
 		if e = s.CheckSchema(ctx); e != nil {
@@ -152,6 +155,63 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	}
 }
 
+func relocate(ctx context.Context, args []string, out io.Writer, s *store.Store, c config.Config) error {
+	flags := flag.NewFlagSet("analytics relocate", flag.ContinueOnError)
+	flags.SetOutput(out)
+	startRaw := flags.String("start", "", "start of time window, RFC3339; default 14 days ago")
+	endRaw := flags.String("end", "", "exclusive end, RFC3339; default command start time")
+	afterRaw := flags.String("after", "", "resume from last committed occurred_at, RFC3339")
+	afterID := flags.Int64("after-id", 0, "resume from last committed row id")
+	batch := flags.Int("batch-size", 500, "rows per short transaction (1..1000)")
+	pause := flags.Int("pause-ms", 100, "pause between batches")
+	dryRun := flags.Bool("dry-run", false, "resolve and report without updating rows")
+	if e := flags.Parse(args); e != nil {
+		return e
+	}
+	if flags.NArg() != 0 {
+		return errors.New("unexpected relocate arguments")
+	}
+	now := time.Now().UTC()
+	o := analytics.RelocateOptions{Start: now.Add(-14 * 24 * time.Hour), End: now, BatchSize: *batch, Pause: time.Duration(*pause) * time.Millisecond, AfterID: *afterID, DryRun: *dryRun}
+	for raw, dst := range map[*string]*time.Time{startRaw: &o.Start, endRaw: &o.End, afterRaw: &o.After} {
+		if *raw != "" {
+			parsed, e := time.Parse(time.RFC3339Nano, *raw)
+			if e != nil {
+				return fmt.Errorf("relocate timestamps must be RFC3339: %w", e)
+			}
+			*dst = parsed.UTC()
+		}
+	}
+	if o.Start.Before(now.Add(-14 * 24 * time.Hour)) {
+		o.Start = now.Add(-14 * 24 * time.Hour)
+	}
+	if o.End.After(now) {
+		return errors.New("relocate end cannot be in the future")
+	}
+	// A resumed cursor may have fallen outside the moving retention window.
+	if !o.After.IsZero() && o.After.Before(o.Start) {
+		o.After = time.Time{}
+		o.AfterID = 0
+	}
+	if e := s.CheckSchema(ctx); e != nil {
+		return e
+	}
+	geo, e := analytics.OpenGeoIPWithOptions(c.GeoIPCityDB, c.GeoIPASNDB, c.GeoIPQQWryDB, c.GeoIPAPIURL)
+	if e != nil {
+		return e
+	}
+	defer geo.Close()
+	geo.BindRateStore(s)
+	storage := &analytics.Storage{Store: s, Geo: geo}
+	encoder := json.NewEncoder(out)
+	r, e := storage.Relocate(ctx, o, func(r analytics.RelocateReport) error { return encoder.Encode(r) })
+	if e != nil {
+		_ = encoder.Encode(r)
+		return fmt.Errorf("relocate stopped; resume using last reported start/end/after/after_id: %w", e)
+	}
+	return nil
+}
+
 func serve(ctx context.Context, s *store.Store, c config.Config) error {
 	if c.Env == "production" {
 		if e := s.CheckSchema(ctx); e != nil {
@@ -168,11 +228,12 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 	maintenanceDone := make(chan struct{})
 	defer func() { cancelBackground(); <-maintenanceDone }()
 	if c.AnalyticsEnabled {
-		geo, e := analytics.OpenGeoIP(c.GeoIPCityDB, c.GeoIPASNDB)
+		geo, e := analytics.OpenGeoIPWithOptions(c.GeoIPCityDB, c.GeoIPASNDB, c.GeoIPQQWryDB, c.GeoIPAPIURL)
 		if e != nil {
 			return e
 		}
 		defer geo.Close()
+		geo.BindRateStore(s)
 		storage := &analytics.Storage{Store: s, Geo: geo}
 		maintenanceDelay := time.Hour
 		initialContext, initialCancel := context.WithTimeout(ctx, 30*time.Second)

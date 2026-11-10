@@ -85,9 +85,11 @@ axolotl-server dist prune
 axolotl-server db verify --source <旧SQLite文件>
 axolotl-server analytics maintain --dry-run
 axolotl-server analytics maintain
+axolotl-server analytics relocate --dry-run
+axolotl-server analytics relocate
 ```
 
-导入、重建和手动维护命令在停止服务后执行。服务本身会在启动时和运行期间维护统计数据，无需额外调度。
+导入、重建和文件维护命令在停止服务后执行。`analytics relocate` 支持服务运行期间分批重算历史 IP 属地；服务本身会在启动时和运行期间维护统计保留数据，无需额外调度。
 
 ## 行为变化
 
@@ -105,6 +107,7 @@ axolotl-server analytics maintain
 - [旧服务迁移](docs/MIGRATION.md)：预检、导入、校验、切换与回滚。
 - [外部分析接入](docs/ANALYTICS.md)：稳定视图、白名单字段、权限和查询示例。
 - [统计 API v2](docs/STATS_API.md)：dashboard、筛选、分组、性能、地理信息和升级说明。
+- [IP 属地与历史重算](docs/GEOIP.md)：纯真中国城市、MaxMind、共享 40 次/分钟在线兜底，以及不停服重算与续跑。
 - [统计 OpenAPI](docs/openapi-stats.json)：可导入 API 客户端的接口规范。
 - [验证记录](docs/VALIDATION.md)：测试方式、实际验证和容量测量。
 

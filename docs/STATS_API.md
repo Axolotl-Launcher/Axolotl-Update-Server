@@ -120,14 +120,15 @@ curl -sS -G -H "Authorization: Bearer $ADMIN_TOKEN" \
 
 ## 国家、城市和 ASN
 
-使用合法取得的 GeoLite2/GeoIP2 City 和 ASN MMDB 文件，不自动下载，不调用在线 IP 服务。
+采用与 hjfunnyMC 后端一致的数据源顺序：中国 IP 优先纯真 `qqwry.ipdb`，其余使用 MaxMind，缺少省市时可选 ip-api 兜底。国家/洲保持两位代码（如 CN/AS），省市优先中文。详见 [IP 属地配置与历史重算](GEOIP.md)。
 
 ```dotenv
 ANALYTICS_GEOIP_CITY_DB=/var/lib/axolotl/geoip/GeoLite2-City.mmdb
 ANALYTICS_GEOIP_ASN_DB=/var/lib/axolotl/geoip/GeoLite2-ASN.mmdb
+ANALYTICS_QQWRY_DB=/var/lib/axolotl/geoip/qqwry.ipdb
 ```
 
-未配置时相关字段为 null，meta.capabilities 报告未配置；路径无效启动失败。国家库也能提供国家信息，城市和坐标取决于库内容。更新文件后重启；私有/回环 IP 不补地理信息，历史请求不重写。容器需只读挂载库目录并传入环境变量。
+未配置时相关字段为 null，meta.capabilities 报告未配置；显式配置的路径无效则启动失败。纯真省市不混用 MaxMind 的近似坐标，ASN 独立来自 ASN MMDB。更新文件后重启服务让新请求使用新库，历史请求可在服务运行期间用 `analytics relocate` 重算。容器需只读挂载库目录并传入环境变量。在线兜底默认关闭；启用后共享每滚动 60 秒最多 40 次请求的额度，采集仅使用本地和缓存结果。
 
 配置实际代理的 TRUSTED_PROXY_CIDRS。默认只信任 loopback，不再默认信任 Cloudflare 网段；不信任客户端自报的国家、ASN 等头。没有本地地理库时不伪造地理数据。
 

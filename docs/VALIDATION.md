@@ -79,3 +79,11 @@ TEST_POSTGRES_URL='<测试管理员连接串>' go test ./internal/analytics -run
 - force update 修改清单后旧 ETag 不会错误返回 304，清单不再使用 immutable 缓存。
 
 应用网络下载测试使用本机 fixture HTTP 服务，发布集成测试使用受控的下载替身并执行真实磁盘摘要校验，不下载真实 GitHub 安装包。未连接生产服务器修改 OpenResty 或 Cloudflare；提供基于用户现有配置的示例和部署验收命令，线上 `nginx -t`、CF HIT/Range 和橙云访问需部署后验证。
+
+## 2026-11-10 IP 属地与在线历史重算
+
+SQLite、独立临时 PostgreSQL 的完整 `go test -race -count=1 ./...`、`go vet ./...`、发布编译和 CLI 帮助通过。新增覆盖中国纯真优先、中文省市/国家代码、API 缓存、两个查询器共用 40 次额度、80 次并发预留只允许 40 次、429 跨查询器暂停，以及历史重算 dry-run、中断续跑、另一个数据库连接继续采集、请求字节等非属地字段保留。
+
+真实纯真 IPDB 使用 nmgliangwei/qqwry.ipdb 的 2026-11-04 Release，文件 40975164 字节，样例 `123.129.103.68` 得到 `CN / 山东 / 东营`。文件只放在忽略的 `.tools/geoip/`，不提交仓库。
+
+另用实际编译二进制在独立 PostgreSQL 数据库、端口 8095 启动 `serve`，同时从另一个进程运行 `analytics relocate --batch-size 5 --pause-ms 300`：20 条旧事件全部重算为该省市，总响应字节仍为 19980，服务健康/API 查询继续可用。测试数据库与进程在验证结束后移除。在线 ip-api 测试使用本地 HTTP fixture，不向真实服务发送访客 IP，也未修改生产库。
