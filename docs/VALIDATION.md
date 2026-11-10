@@ -92,7 +92,7 @@ SQLite、独立临时 PostgreSQL 的完整 `go test -race -count=1 ./...`、`go 
 
 `DIST_PUBLIC_BASE_URL` 可单独指定公开安装包域名，不配置时兼容 PUBLIC_BASE_URL。测试覆盖 `/latest`、发布生成的本地清单、下载目录和清单 rebuild/verify 均采用 dist 域名，两个域名入口仍提供相同本地包，不进入 DIST_SERVER 跳转模式；错误配置/自跳转校验通过。完整 `go test -race ./...`、`go vet ./...` 与发布编译通过。
 
-额外 OpenResty 站点基于用户现有配置，只提供 `/dist/*`。未修改实际 DNS、证书、Cloudflare 或生产站点；部署需检查证书覆盖 dist.axlmc.org、执行 nginx -t，并验证真实 CDN 访问。
+OpenResty 配置基于用户现有配置，两个域名的虚拟主机合并在同一份 `deploy/nginx.example.conf`，dist 使用 root `/www/wwwroot/dist.axlmc.org` 并复用已扩展的原 update 证书，只提供 `/dist/*`。已检查源码配置与文档一致性，未在本机运行 Nginx，未修改实际 DNS、证书、Cloudflare 或生产站点；部署需执行 nginx -t，并验证真实 CDN 访问。
 
 ## 2026-11-10 统计维度口径修正
 

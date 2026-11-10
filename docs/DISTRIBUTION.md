@@ -55,14 +55,14 @@ Cloudflare IP 白名单证明请求来自其网络，不能绑定你自己的 Zo
 上线顺序：
 
 1. 在 Cloudflare 为 `dist.axlmc.org` 添加指向源站的 DNS 记录并启用代理（橙云）。
-2. 申请/安装覆盖 `dist.axlmc.org` 的源站 TLS 证书；现有 update 域名证书不一定覆盖新域名。Cloudflare Full (strict) 会检查源站证书主机名。
-3. 原 update 站点保持不变，额外安装 `deploy/nginx.dist.example.conf` 为新站点文件，按实际证书路径修改。新域名只开放 `/dist/*`，API 和 `/latest` 仍由 update 域名提供。
+2. 复用已经添加 `dist.axlmc.org` 的原证书：`/etc/letsencrypt/live/update.axlmc.org/fullchain.pem` 和 `privkey.pem`。
+3. 使用同一份 `deploy/nginx.example.conf` 替换原 update 站点文件；文件内同时包含 update 和 dist 的虚拟主机，不另建 dist 站点文件。dist 虚拟主机设置 `root /www/wwwroot/dist.axlmc.org`，只开放 `/dist/*`，API 和 `/latest` 仍由 update 域名提供。
 4. 新域名加入 Cloudflare 的 `/dist/*` 缓存规则；若启用了 `DIST_ORIGIN_SECRET`，其请求头覆盖规则也必须匹配新域名。
 5. 测试新站点与新域名下载正常后，停服修改 `.env` 的 `DIST_PUBLIC_BASE_URL`，执行 `manifests rebuild`、`db verify`，再启动服务。已有包不用重新下载，动态 `/latest` 和下载目录会自动生成新域名链接。
 
 ```sh
-# 先确保示例中的新域名证书路径存在并匹配。
-cp deploy/nginx.dist.example.conf /www/server/openresty/nginx/conf/sites-enabled/dist.axlmc.org.conf
+cp /www/server/openresty/nginx/conf/sites-enabled/update.axlmc.org.conf /www/server/openresty/nginx/conf/sites-enabled/update.axlmc.org.conf.bak
+cp deploy/nginx.example.conf /www/server/openresty/nginx/conf/sites-enabled/update.axlmc.org.conf
 /www/server/openresty/nginx/sbin/nginx -t
 # 检查通过后
 /www/server/openresty/nginx/sbin/nginx -s reload
@@ -70,6 +70,8 @@ curl -I https://dist.axlmc.org/dist/<version>/<filename>
 ```
 
 新域名缓存策略、Cloudflare 来源限制、GitHub 回退均与旧入口一致。旧 update 域名的安装包路径继续有效，以兼容已经发布/缓存的旧清单与正在下载的客户端，不额外增加一次跳转。切换时清除旧清单的 Cloudflare 缓存并等待 `/latest` 原有短缓存刷新；不必清除旧二进制缓存。新站点不添加 `/api/*` 或 `/latest` 路由，也不影响源站现有统计采集范围。
+
+若先前已经创建单独的 `dist.axlmc.org.conf`，将它移出 `sites-enabled` 后再检查/重载，避免重复声明同一域名。这里的 Nginx `root` 仅声明站点目录，`/dist/*` 仍由 Go 反代处理；安装包实际位置由 `.env` 的 `DIST_ROOT` 决定，现有文件无需搬迁。若也希望改变安装包的物理位置，应另外停服迁移目录并修改 `DIST_ROOT`，不能仅靠 Nginx root 改变存储路径。
 
 ## 缓存策略
 
