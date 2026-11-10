@@ -30,6 +30,7 @@ type Config struct {
 	AnalyticsQueueSize, AnalyticsBatchSize                            int
 	AnalyticsFlushInterval, AnalyticsShutdownTimeout                  time.Duration
 	GeoIPCityDB, GeoIPASNDB                                           string
+	GeoIPQQWryDB, GeoIPAPIURL                                         string
 	AnalyticsIncludeStatsRequests                                     bool
 	StatsQueryTimeout                                                 time.Duration
 }
@@ -71,6 +72,8 @@ func Load() (Config, error) {
 	}
 	c.GeoIPCityDB = os.Getenv("ANALYTICS_GEOIP_CITY_DB")
 	c.GeoIPASNDB = os.Getenv("ANALYTICS_GEOIP_ASN_DB")
+	c.GeoIPQQWryDB = os.Getenv("ANALYTICS_QQWRY_DB")
+	c.GeoIPAPIURL = os.Getenv("ANALYTICS_GEOIP_API_URL")
 	if raw, ok := os.LookupEnv("ANALYTICS_INCLUDE_STATS_REQUESTS"); ok {
 		b, e := strconv.ParseBool(raw)
 		if e != nil {

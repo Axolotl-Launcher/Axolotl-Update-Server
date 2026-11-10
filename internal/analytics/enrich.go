@@ -1,11 +1,16 @@
 package analytics
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/model"
+	"github.com/Axolotl-Launcher/Axolotl-Update-Server-Golang/internal/store"
+	ipdb "github.com/ipipdotnet/ipdb-go"
 	"github.com/mileusna/useragent"
 	maxminddb "github.com/oschwald/maxminddb-golang/v2"
 )
@@ -37,10 +42,29 @@ func classifyUA(raw string) userAgent {
 	return userAgent{UserAgent: raw, Browser: &name, BrowserVersion: model.Ptr(u.Version), OS: &osName, OSVersion: model.Ptr(u.OSVersion), DeviceType: &device, IsBot: model.Ptr(u.Bot)}
 }
 
-// GeoIP uses operator-provided MMDB files; no network calls occur while collecting requests.
-type GeoIP struct{ City, ASN *maxminddb.Reader }
+// Local lookups and cached API results are used by collection. Network fallback
+// is queued separately and never runs inside a database write transaction.
+type GeoIP struct {
+	City, ASN    *maxminddb.Reader
+	qqwry        *ipdb.City
+	qqLookup     func(string) ([]string, error)
+	apiURL       string
+	mu           sync.Mutex
+	cache        map[string]geoCacheEntry
+	pending      map[string]bool
+	calls        []time.Time
+	blockedUntil time.Time
+	queue        chan netip.Addr
+	cancel       context.CancelFunc
+	done         chan struct{}
+	rateStore    *store.Store
+}
 
 func OpenGeoIP(cityPath, asnPath string) (*GeoIP, error) {
+	return OpenGeoIPWithOptions(cityPath, asnPath, "", "")
+}
+
+func OpenGeoIPWithOptions(cityPath, asnPath, qqwryPath, apiURL string) (*GeoIP, error) {
 	g := &GeoIP{}
 	var err error
 	if cityPath != "" {
@@ -56,11 +80,35 @@ func OpenGeoIP(cityPath, asnPath string) (*GeoIP, error) {
 			return nil, fmt.Errorf("open GeoIP ASN database: %w", err)
 		}
 	}
+	if qqwryPath != "" {
+		g.qqwry, err = ipdb.NewCity(qqwryPath)
+		if err != nil {
+			g.Close()
+			return nil, fmt.Errorf("open QQWry IPDB: %w", err)
+		}
+		g.qqLookup = func(ip string) ([]string, error) { return g.qqwry.Find(ip, "CN") }
+		cn := false
+		for _, language := range g.qqwry.Languages() {
+			cn = cn || language == "CN"
+		}
+		if !cn {
+			g.Close()
+			return nil, fmt.Errorf("QQWry IPDB requires CN language")
+		}
+	}
+	if err = g.startAPI(apiURL); err != nil {
+		g.Close()
+		return nil, err
+	}
 	return g, nil
 }
 func (g *GeoIP) Close() {
 	if g == nil {
 		return
+	}
+	if g.cancel != nil {
+		g.cancel()
+		<-g.done
 	}
 	if g.City != nil {
 		_ = g.City.Close()
@@ -69,7 +117,7 @@ func (g *GeoIP) Close() {
 		_ = g.ASN.Close()
 	}
 }
-func (g *GeoIP) Enrich(e *Event, ip netip.Addr) {
+func (g *GeoIP) enrichMMDB(e *Event, ip netip.Addr) {
 	if g == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
 		return
 	}
@@ -99,11 +147,11 @@ func (g *GeoIP) Enrich(e *Event, ip netip.Addr) {
 			if row.Continent.Code != "" {
 				e.Continent = &row.Continent.Code
 			}
-			if name := row.City.Names["en"]; name != "" {
+			if name := geoName(row.City.Names); name != "" {
 				e.City = &name
 			}
 			if len(row.Subdivisions) > 0 {
-				if name := row.Subdivisions[0].Names["en"]; name != "" {
+				if name := geoName(row.Subdivisions[len(row.Subdivisions)-1].Names); name != "" {
 					e.Region = &name
 				}
 			}
