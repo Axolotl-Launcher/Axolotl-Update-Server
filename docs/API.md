@@ -87,6 +87,8 @@ ETag 由响应字段计算，匹配 `If-None-Match` 返回 304。缓存默认 30
 
 ### 分发
 
+`DIST_PUBLIC_BASE_URL=https://dist.axlmc.org` 将 `/latest`、本地 `manifest.json` 和下载目录中的文件 URL 生成为 `https://dist.axlmc.org/dist/<version>/<filename>`。它只控制公开链接，不开启远端跳转；未配置时继续使用 `PUBLIC_BASE_URL`。`DIST_SERVER` 应留空，安装包仍由本机提供，旧 update 域名的 `/dist/*` 继续可用。已有清单需执行 `manifests rebuild` 更新链接，见 [分发部署文档](DISTRIBUTION.md)。
+
 `DIST_SERVER=https://downloads.example.com/base` 时：
 
 ```text

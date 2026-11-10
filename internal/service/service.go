@@ -164,7 +164,7 @@ func (s *Service) Latest(ctx context.Context, channel, platform, current string)
 				continue
 			}
 		}
-		m, err := domain.BuildManifest(v, s.Config.PublicBaseURL, platform, now)
+		m, err := domain.BuildManifest(v, s.Config.DistributionBaseURL(), platform, now)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +309,7 @@ func (s *Service) Rebuild(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		m, e := domain.BuildManifest(v, s.Config.PublicBaseURL, "", s.Now())
+		m, e := domain.BuildManifest(v, s.Config.DistributionBaseURL(), "", s.Now())
 		if e != nil {
 			return e
 		}
@@ -347,7 +347,7 @@ func (s *Service) VerifyManifests(ctx context.Context) error {
 		if e = json.Unmarshal(b, &got); e != nil {
 			return e
 		}
-		want, e := domain.BuildManifest(v, s.Config.PublicBaseURL, "", s.Now())
+		want, e := domain.BuildManifest(v, s.Config.DistributionBaseURL(), "", s.Now())
 		if e != nil {
 			return e
 		}

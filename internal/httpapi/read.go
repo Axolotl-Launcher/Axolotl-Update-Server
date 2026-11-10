@@ -104,7 +104,7 @@ func (v *Server) downloadPayload(item model.Version, include bool) gin.H {
 	})
 	downloads := []gin.H{}
 	for _, a := range artifacts {
-		downloads = append(downloads, gin.H{"id": a.ID, "kind": a.Kind, "platform": a.Platform, "target_platforms": a.TargetPlatforms, "architecture": a.Architecture, "variant": a.Variant, "label": label(a), "display_name": label(a), "sort_order": a.SortOrder, "filename": a.Filename, "url": v.Service.Config.PublicBaseURL + "/" + a.RelativePath, "size": a.Size, "sha256": a.SHA256, "signature": a.Signature, "signature_filename": a.SignatureFilename})
+		downloads = append(downloads, gin.H{"id": a.ID, "kind": a.Kind, "platform": a.Platform, "target_platforms": a.TargetPlatforms, "architecture": a.Architecture, "variant": a.Variant, "label": label(a), "display_name": label(a), "sort_order": a.SortOrder, "filename": a.Filename, "url": v.Service.Config.DistributionBaseURL() + "/" + a.RelativePath, "size": a.Size, "sha256": a.SHA256, "signature": a.Signature, "signature_filename": a.SignatureFilename})
 	}
 	return gin.H{"version": item.Version, "channel": item.Channel, "status": item.Status, "published_at": item.PublishedAt, "force_update": item.ForceUpdate, "downloads": downloads}
 }

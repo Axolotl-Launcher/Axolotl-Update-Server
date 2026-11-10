@@ -87,3 +87,9 @@ SQLite、独立临时 PostgreSQL 的完整 `go test -race -count=1 ./...`、`go 
 真实纯真 IPDB 使用 nmgliangwei/qqwry.ipdb 的 2026-11-04 Release，文件 40975164 字节，样例 `123.129.103.68` 得到 `CN / 山东 / 东营`。文件只放在忽略的 `.tools/geoip/`，不提交仓库。
 
 另用实际编译二进制在独立 PostgreSQL 数据库、端口 8095 启动 `serve`，同时从另一个进程运行 `analytics relocate --batch-size 5 --pause-ms 300`：20 条旧事件全部重算为该省市，总响应字节仍为 19980，服务健康/API 查询继续可用。测试数据库与进程在验证结束后移除。在线 ip-api 测试使用本地 HTTP fixture，不向真实服务发送访客 IP，也未修改生产库。
+
+## 2026-11-10 独立 dist 域名
+
+`DIST_PUBLIC_BASE_URL` 可单独指定公开安装包域名，不配置时兼容 PUBLIC_BASE_URL。测试覆盖 `/latest`、发布生成的本地清单、下载目录和清单 rebuild/verify 均采用 dist 域名，两个域名入口仍提供相同本地包，不进入 DIST_SERVER 跳转模式；错误配置/自跳转校验通过。完整 `go test -race ./...`、`go vet ./...` 与发布编译通过。
+
+额外 OpenResty 站点基于用户现有配置，只提供 `/dist/*`。未修改实际 DNS、证书、Cloudflare 或生产站点；部署需检查证书覆盖 dist.axlmc.org、执行 nginx -t，并验证真实 CDN 访问。

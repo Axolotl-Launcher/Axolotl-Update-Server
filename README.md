@@ -48,6 +48,7 @@ ADMIN_TOKEN=<随机令牌>
 WEBHOOK_SECRET=<随机密钥>
 DIST_ROOT=/var/lib/axolotl-update-server/dist
 PUBLIC_BASE_URL=https://update.axlmc.org
+DIST_PUBLIC_BASE_URL=https://dist.axlmc.org
 DIST_SERVER=
 DIST_CLOUDFLARE_ONLY=true
 TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128

@@ -22,6 +22,8 @@ GitHub 回退会让客户端下载 GitHub 公共资源；“仅 Cloudflare”约
 
 ```dotenv
 DIST_ROOT=/www/wwwroot/update.axlmc.org/dist
+PUBLIC_BASE_URL=https://update.axlmc.org
+DIST_PUBLIC_BASE_URL=https://dist.axlmc.org
 DIST_SERVER=
 DIST_CLOUDFLARE_ONLY=true
 UPDATE_SERVER_HOST=127.0.0.1
@@ -45,6 +47,29 @@ cp deploy/nginx.example.conf /www/server/openresty/nginx/conf/sites-enabled/upda
 ```
 
 Cloudflare IP 白名单证明请求来自其网络，不能绑定你自己的 Zone。需要绑定时，生成至少 32 字符的随机 `DIST_ORIGIN_SECRET`，在你自己的 Cloudflare Request Header Transform Rule 中对 `/dist/*` 覆盖设置 `X-Axolotl-Origin-Secret` 为相同值。应用对每个 dist 请求额外检查它。不要把密钥放在前端、URL 或日志中；未配置规则前保持该配置为空。也可以在 OpenResty 使用 Zone 专用证书的 Authenticated Origin Pulls，或部署 Cloudflare Tunnel。
+
+## 额外分发域名 dist.axlmc.org
+
+同一台服务器、同一个 Go 进程和 DIST_ROOT 可以同时接受两个域名的 `/dist/*` 请求，无需复制安装包。`DIST_PUBLIC_BASE_URL=https://dist.axlmc.org` 指定对外下载链接，保留 `/dist/<version>/<filename>` 路径；不配置则兼容原 PUBLIC_BASE_URL。`DIST_SERVER` 必须留空，不要把它设置为指向同一 Go 服务的新域名，否则会产生重定向循环；配置校验也会拒绝这种组合。
+
+上线顺序：
+
+1. 在 Cloudflare 为 `dist.axlmc.org` 添加指向源站的 DNS 记录并启用代理（橙云）。
+2. 申请/安装覆盖 `dist.axlmc.org` 的源站 TLS 证书；现有 update 域名证书不一定覆盖新域名。Cloudflare Full (strict) 会检查源站证书主机名。
+3. 原 update 站点保持不变，额外安装 `deploy/nginx.dist.example.conf` 为新站点文件，按实际证书路径修改。新域名只开放 `/dist/*`，API 和 `/latest` 仍由 update 域名提供。
+4. 新域名加入 Cloudflare 的 `/dist/*` 缓存规则；若启用了 `DIST_ORIGIN_SECRET`，其请求头覆盖规则也必须匹配新域名。
+5. 测试新站点与新域名下载正常后，停服修改 `.env` 的 `DIST_PUBLIC_BASE_URL`，执行 `manifests rebuild`、`db verify`，再启动服务。已有包不用重新下载，动态 `/latest` 和下载目录会自动生成新域名链接。
+
+```sh
+# 先确保示例中的新域名证书路径存在并匹配。
+cp deploy/nginx.dist.example.conf /www/server/openresty/nginx/conf/sites-enabled/dist.axlmc.org.conf
+/www/server/openresty/nginx/sbin/nginx -t
+# 检查通过后
+/www/server/openresty/nginx/sbin/nginx -s reload
+curl -I https://dist.axlmc.org/dist/<version>/<filename>
+```
+
+新域名缓存策略、Cloudflare 来源限制、GitHub 回退均与旧入口一致。旧 update 域名的安装包路径继续有效，以兼容已经发布/缓存的旧清单与正在下载的客户端，不额外增加一次跳转。切换时清除旧清单的 Cloudflare 缓存并等待 `/latest` 原有短缓存刷新；不必清除旧二进制缓存。新站点不添加 `/api/*` 或 `/latest` 路由，也不影响源站现有统计采集范围。
 
 ## 缓存策略
 

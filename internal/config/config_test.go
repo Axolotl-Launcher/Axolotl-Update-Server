@@ -54,3 +54,33 @@ func TestDistConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestDistributionPublicBaseURL(t *testing.T) {
+	c := Default()
+	if c.DistributionBaseURL() != c.PublicBaseURL {
+		t.Fatal("missing backwards-compatible URL")
+	}
+	c.DistPublicBaseURL = " https://dist.axlmc.org/ "
+	if e := c.Validate(); e != nil {
+		t.Fatal(e)
+	}
+	if c.DistributionBaseURL() != "https://dist.axlmc.org" || c.DistServer != "" {
+		t.Fatal(c.DistributionBaseURL(), c.DistServer)
+	}
+	c.DistServer = "https://dist.axlmc.org"
+	if c.Validate() == nil {
+		t.Fatal("distribution redirect loop accepted")
+	}
+	for _, invalid := range []string{"ftp://dist.axlmc.org", "https://user:pass@dist.axlmc.org", "https://dist.axlmc.org?x=1", "https://dist.axlmc.org/../bad"} {
+		c := Default()
+		c.DistPublicBaseURL = invalid
+		if c.Validate() == nil {
+			t.Fatal("invalid public distribution URL", invalid)
+		}
+	}
+	t.Setenv("DIST_PUBLIC_BASE_URL", "https://dist.axlmc.org/")
+	c, e := Load()
+	if e != nil || c.DistributionBaseURL() != "https://dist.axlmc.org" {
+		t.Fatal(c.DistributionBaseURL(), e)
+	}
+}

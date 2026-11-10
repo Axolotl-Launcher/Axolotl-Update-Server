@@ -259,7 +259,7 @@ func (s *Service) Publish(ctx context.Context, raw []byte) (result map[string]an
 			seen[platform] = true
 		}
 	}
-	m, e := domain.BuildManifest(v, s.Config.PublicBaseURL, "", s.Now())
+	m, e := domain.BuildManifest(v, s.Config.DistributionBaseURL(), "", s.Now())
 	if e != nil {
 		return nil, e
 	}

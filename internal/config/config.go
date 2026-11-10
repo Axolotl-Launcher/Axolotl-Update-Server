@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	Env, DatabaseURL, DistRoot, PublicBaseURL, DistServer, Host, Port string
+	DistPublicBaseURL                                                 string
 	AdminToken, WebhookSecret                                         string
 	DistCloudflareOnly                                                bool
 	DistOriginSecret                                                  string
@@ -55,6 +56,7 @@ func Default() Config {
 func Load() (Config, error) {
 	_ = godotenv.Load()
 	c := Default()
+	c.DistPublicBaseURL = os.Getenv("DIST_PUBLIC_BASE_URL")
 	c.DistOriginSecret = os.Getenv("DIST_ORIGIN_SECRET")
 	if raw, ok := os.LookupEnv("DIST_CLOUDFLARE_ONLY"); ok {
 		b, e := strconv.ParseBool(raw)
@@ -176,6 +178,12 @@ func (c *Config) Validate() error {
 	if _, err := validURL(c.PublicBaseURL); err != nil {
 		return fmt.Errorf("invalid PUBLIC_BASE_URL: %w", err)
 	}
+	c.DistPublicBaseURL = strings.TrimRight(strings.TrimSpace(c.DistPublicBaseURL), "/")
+	if c.DistPublicBaseURL != "" {
+		if _, err := validURL(c.DistPublicBaseURL); err != nil {
+			return fmt.Errorf("invalid DIST_PUBLIC_BASE_URL: %w", err)
+		}
+	}
 	c.DistServer = strings.TrimRight(strings.TrimSpace(c.DistServer), "/")
 	if c.DistServer != "" {
 		u, err := validURL(c.DistServer)
@@ -186,6 +194,10 @@ func (c *Config) Validate() error {
 		if SameEndpoint(u, p) && u.Path == p.Path {
 			return fmt.Errorf("DIST_SERVER points to PUBLIC_BASE_URL")
 		}
+		d, _ := url.Parse(c.DistributionBaseURL())
+		if SameEndpoint(u, d) && u.Path == d.Path {
+			return fmt.Errorf("DIST_SERVER points to DIST_PUBLIC_BASE_URL")
+		}
 	}
 	root, err := filepath.Abs(c.DistRoot)
 	if err != nil {
@@ -193,6 +205,15 @@ func (c *Config) Validate() error {
 	}
 	c.DistRoot = root
 	return nil
+}
+
+// DistributionBaseURL changes advertised download links without enabling an
+// external redirect backend or changing local storage/retention behavior.
+func (c Config) DistributionBaseURL() string {
+	if c.DistPublicBaseURL != "" {
+		return strings.TrimRight(c.DistPublicBaseURL, "/")
+	}
+	return strings.TrimRight(c.PublicBaseURL, "/")
 }
 
 func validURL(value string) (*url.URL, error) {
