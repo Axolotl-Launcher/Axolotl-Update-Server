@@ -118,6 +118,20 @@ curl -sS -G -H "Authorization: Bearer $ADMIN_TOKEN" \
   'http://127.0.0.1:8082/api/admin/stats/requests'
 ```
 
+## 定时统计快照
+
+生产 `serve` 启动后在后台预计算最近 1h、6h、24h、3d、7d、14d 的概览、趋势及所有白名单维度分布，之后每小时维护。每次最多一个后台任务，PostgreSQL 用 advisory lock 防止多个进程同时构建。每个范围独立完成后原子替换，持久化结果重启后仍可用；失败保留上一份完整结果并在一分钟后重试未完成/过期范围，不由 HTTP 请求触发构建。
+
+常用无筛选范围、自动 interval、limit 不大于 100 的聚合查询读取快照；分布预存每维前 100 个值，响应按请求 limit 截取并重算 other_requests，不会改变占比的总数分母。IP/UA 去重和延迟百分位仍用现有精确 SQL 计算，不累加跨时间桶的独立 IP 或平均百分位。这里只预存计算结果，没有为所有筛选组合建立数据立方体，后台每小时仍有扫描明细的开销。
+
+不带 `scheduled` 时，只把截止时间接近当前（两分钟内）的常用相对范围识别为快照请求；管理端使用 `scheduled=true` 明确请求该时长的最新定时结果。**响应 window 是实际快照范围**，不保证与传入 start/end 相同。`generated_at` 为该结果生成完成的时间，额外 `cache={scheduled:true,refresh_seconds:3600,stale:boolean}` 表示数据来源和更新是否超过一小时。刷新按钮重新读取已有结果，不强制后台计算；超过三小时的结果不再提供。
+
+首次部署无快照或结果已过期时返回 HTTP 202：`{"status":"pending","code":"stats_warming","message":"..."}`，附 `Retry-After: 5`。调用方等待后重新 GET；请求不会创建任务或触发扫描。AxoAdmin 已处理此响应，保留旧内容和加载状态，最多等待十分钟，然后提示稍后重试。后台首次大范围构建可能更久，可稍后重新打开页面。
+
+带精确筛选、自定义历史范围、显式 interval 或 limit 大于 100 仍执行原实时查询；请求明细分页也保持实时。因此这类大范围请求仍可能超时，需要缩小范围。status 的历史计数及 oldest/newest 使用 14 天快照，队列/写入/丢弃计数仍实时。UA 重分类或属地重算后，快照在下一次定时维护中更新。
+
+部署前执行 `db migrate` 创建 `00006_stats_snapshots` 小表，然后启动新版 `serve`，不需要额外配置 cron。管理端应与服务端一起升级，避免把 202 当成完整结果解析。快照只有六行，每行存一个常用范围的结果，不复制原始请求明细。后台单范围构建限时十分钟，超时会记录警告并稍后重试，不保证在任意数据规模/硬件上都能完成。
+
 ## 维度中的空值与应用识别
 
 统计分布及精确筛选使用相同的计算规则。`Axolotl-Launcher/<版本> (<系统>)`、旧 `axolotl/<版本>`、`Axolotl Launcher/<版本>` 和仅 SemVer 的应用 UA 统一为 `browser=Axolotl`、`device_type=application`；浏览器版本不再混入应用版本，而是统一 `@application`。新采集可从应用 UA 提取客户端版本，原始 User-Agent 不改写。`/latest` 已有平台和客户端版本、且 UA 未识别或明确为 Tauri 时也可识别应用。操作系统优先 UA，其次该应用请求的更新平台，均没有时为 `@not_provided`，不推断具体系统版本。

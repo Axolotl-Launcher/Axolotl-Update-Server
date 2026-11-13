@@ -39,6 +39,7 @@ type Server struct {
 	statistics *analytics.Statistics
 	statsGate  chan struct{}
 	Collector  *analytics.Collector
+	Snapshots  *analytics.Snapshots
 }
 
 func New(s *service.Service, observer Observer) *Server {

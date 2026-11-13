@@ -4,6 +4,8 @@ Gin 更新服务。生产使用 PostgreSQL，本地调试使用 SQLite；保留 
 
 采集到达应用的 `/latest` 和 `/api/*` 请求，明细保留 14 天，提供受管理员认证保护的统计 API：概览、时间趋势、维度分布、性能百分位、状态与流量、客户端/来源/地理信息，以及请求明细。也保留 PostgreSQL 只读视图；不包含分析页面和长期汇总。
 
+常用无筛选统计由 `serve` 的后台任务每小时预计算并持久化，请求直接读取快照。首次构建未完成时返回 202 供调用方等待，带筛选/自定义历史范围和明细分页仍实时查询，详见 [统计 API](docs/STATS_API.md)。
+
 ## 本地启动
 
 需要 Go 1.27+ 和 C 编译器。SQLite 驱动使用 CGO：Windows 使用 MinGW/GCC，Linux 安装 `build-essential`，macOS 安装 Xcode Command Line Tools。

@@ -306,6 +306,11 @@ func serve(ctx context.Context, s *store.Store, c config.Config) error {
 	}
 	api := httpapi.New(svc, observer)
 	api.Collector = collector
+	api.Snapshots = &analytics.Snapshots{Store: s}
+	snapshotContext, stopSnapshots := context.WithCancel(context.Background())
+	snapshotsDone := make(chan struct{})
+	go func() { defer close(snapshotsDone); api.Snapshots.Run(snapshotContext) }()
+	defer func() { stopSnapshots(); <-snapshotsDone }()
 	server := &http.Server{Addr: net.JoinHostPort(c.Host, c.Port), Handler: api.Router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.ListenAndServe() }()
