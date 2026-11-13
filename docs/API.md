@@ -71,7 +71,7 @@ ETag 由响应字段计算，匹配 `If-None-Match` 返回 304。缓存默认 30
 - `include_updater`：默认 false，值不区分大小写，仅 `true` 启用。
 - `include_revoked`：默认 false，为 true 时必须管理员认证；指定版本时允许读取撤销版本。latest 始终按已发布版本选择。
 
-默认排除 updater、签名附件和非公开制品。目录按平台、制品 kind、`sort_order`、显示名称排序；Windows 同一 kind 内先按架构排序（`x86_64` 优先于 `aarch64`），再比较 `sort_order` 和显示名称。因此未指定架构、直接选择第一个 Windows 安装包的调用方默认获得 x64；ARM64 安装包和便携包仍保留在目录中。此规则同时适用于 latest 和指定版本目录，不改变 `/latest` 的更新目标平台选择。
+默认排除 updater、签名附件和非公开制品。目录按平台、制品 kind、`sort_order`、显示名称排序；Windows 同一 kind 内先按架构排序（`x86_64` 优先于 `aarch64`，缺失或无法识别的架构按 `x86_64` 排名），再比较 `sort_order` 和显示名称。因此未指定架构、直接选择第一个 Windows 安装包的调用方默认获得 x64；ARM64 安装包和便携包仍保留在目录中。此规则同时适用于 latest 和指定版本目录，不改变 `/latest` 的更新目标平台选择。
 
 目录格式：
 

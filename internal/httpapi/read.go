@@ -100,7 +100,8 @@ func (v *Server) downloadPayload(item model.Version, include bool) gin.H {
 		}
 		// Consumers use the first matching Windows package as their default.
 		if a.Platform == "windows" && b.Platform == "windows" {
-			if x, y := order(wa, a.Architecture), order(wa, b.Architecture); x != y {
+			// Legacy missing or unknown architectures share x64's zero rank.
+			if x, y := wa[a.Architecture], wa[b.Architecture]; x != y {
 				return x < y
 			}
 		}
