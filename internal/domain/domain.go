@@ -32,7 +32,7 @@ func ParseVersion(v string) (*semver.Version, error) {
 	return p, nil
 }
 
-var Platforms = map[string]bool{"windows-x86_64": true, "linux-x86_64": true, "linux-aarch64": true, "darwin-x86_64": true, "darwin-aarch64": true}
+var Platforms = map[string]bool{"windows-x86_64": true, "windows-aarch64": true, "linux-x86_64": true, "linux-aarch64": true, "darwin-x86_64": true, "darwin-aarch64": true}
 var PackagePlatforms = map[string]bool{"windows": true, "macos": true, "linux": true}
 
 func ChannelValid(s string) bool { return s == "release" || s == "beta" }

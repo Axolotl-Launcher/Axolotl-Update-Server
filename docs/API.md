@@ -38,7 +38,9 @@
 
 `channel` 只允许 `release` 或 `beta`。Release 选择已发布稳定版本；Beta 选择已发布稳定 Release 与 Beta 预发布中的最高版本。指定当前版本时，只选择更高版本；撤销版本不参与。只返回含非空签名、元数据有效的 updater 制品，通用 macOS 更新器可以同时映射两个目标平台。
 
-支持的平台：`windows-x86_64`、`linux-x86_64`、`linux-aarch64`、`darwin-x86_64`、`darwin-aarch64`。
+支持的平台：`windows-x86_64`、`windows-aarch64`、`linux-x86_64`、`linux-aarch64`、`darwin-x86_64`、`darwin-aarch64`。
+
+Windows ARM64 更新包使用 `platform: "windows-aarch64"`、`architecture: "aarch64"`，安装包和便携包使用 `platform: "windows"`、`architecture: "aarch64"`。文件名中的 `arm64` 对应协议中的 `aarch64`。
 
 ```json
 {
