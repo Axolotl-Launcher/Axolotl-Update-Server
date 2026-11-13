@@ -89,6 +89,7 @@ func (v *Server) downloadPayload(item model.Version, include bool) gin.H {
 	}
 	po := map[string]int{"windows": 0, "macos": 1, "linux": 2}
 	ko := map[string]int{"installer": 0, "portable": 1, "updater": 2}
+	wa := map[string]int{"x86_64": 0, "aarch64": 1}
 	sort.SliceStable(artifacts, func(i, j int) bool {
 		a, b := artifacts[i], artifacts[j]
 		if x, y := order(po, a.Platform), order(po, b.Platform); x != y {
@@ -96,6 +97,12 @@ func (v *Server) downloadPayload(item model.Version, include bool) gin.H {
 		}
 		if x, y := order(ko, a.Kind), order(ko, b.Kind); x != y {
 			return x < y
+		}
+		// Consumers use the first matching Windows package as their default.
+		if a.Platform == "windows" && b.Platform == "windows" {
+			if x, y := order(wa, a.Architecture), order(wa, b.Architecture); x != y {
+				return x < y
+			}
 		}
 		if a.SortOrder != b.SortOrder {
 			return a.SortOrder < b.SortOrder

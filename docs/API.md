@@ -42,6 +42,8 @@
 
 Windows ARM64 更新包使用 `platform: "windows-aarch64"`、`architecture: "aarch64"`，安装包和便携包使用 `platform: "windows"`、`architecture: "aarch64"`。文件名中的 `arm64` 对应协议中的 `aarch64`。
 
+旧版 Windows x64 客户端仍通过 `X-Axolotl-Platform: windows-x86_64`（或 `platform=windows-x86_64` 查询参数）获取 x64 更新包及其签名，包括运行在 ARM Windows 上的 x64 程序。若更新的版本只有 ARM64 更新包，则继续查找兼容的 x64 版本；没有兼容更新时返回 204，不回退到 ARM64。未指定平台时仍返回包含所有目标的 Tauri 清单，由客户端按平台键选择。
+
 ```json
 {
   "version":"1.9.4",
@@ -69,7 +71,9 @@ ETag 由响应字段计算，匹配 `If-None-Match` 返回 304。缓存默认 30
 - `include_updater`：默认 false，值不区分大小写，仅 `true` 启用。
 - `include_revoked`：默认 false，为 true 时必须管理员认证；指定版本时允许读取撤销版本。latest 始终按已发布版本选择。
 
-默认排除 updater、签名附件和非公开制品。目录格式：
+默认排除 updater、签名附件和非公开制品。目录按平台、制品 kind、`sort_order`、显示名称排序；Windows 同一 kind 内先按架构排序（`x86_64` 优先于 `aarch64`），再比较 `sort_order` 和显示名称。因此未指定架构、直接选择第一个 Windows 安装包的调用方默认获得 x64；ARM64 安装包和便携包仍保留在目录中。此规则同时适用于 latest 和指定版本目录，不改变 `/latest` 的更新目标平台选择。
+
+目录格式：
 
 ```json
 {
@@ -144,6 +148,7 @@ X-Webhook-Signature: sha256=<HMAC-SHA256十六进制>
 
 - `release` 不能发布预发布版本，`beta` 必须是预发布版本，tag 必须为 `v<version>`。
 - 制品 kind 支持 updater、installer、portable；架构支持 x86_64、aarch64、universal。
+- updater 的主平台及每个目标平台必须匹配架构：`*-x86_64` 对应 `x86_64`，`*-aarch64` 对应 `aarch64`；`universal` 仅允许 macOS 的 `darwin-*` 目标。省略架构时按主平台推断。
 - updater 必须有对应 `<filename>.sig`，最大 64 KiB；验证大小、SHA-256、UTF-8 和非空内容。
 - `targetPlatforms` / `target_platforms` 必须非空、无重复、包含主平台，不同 updater 不得覆盖同一个目标。
 - 包平台可用 windows、macos、linux。可选 `variant`、`display_name`、`sort_order`、`is_public`。
