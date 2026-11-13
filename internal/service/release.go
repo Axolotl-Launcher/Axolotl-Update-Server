@@ -410,8 +410,8 @@ func (s *Service) prepare(ctx context.Context, p ReleasePayload) ([]model.Artifa
 		}
 		platforms := model.Strings(nil)
 		if a.Kind == "updater" {
-			if !domain.Platforms[a.Platform] {
-				return nil, zero, domain.Err("invalid_artifact_platform", "Updater platform is not supported.")
+			if !domain.UpdaterSupports(a.Platform, a.Architecture) {
+				return nil, zero, domain.Err("invalid_artifact_platform", "Updater platform and architecture are incompatible.")
 			}
 			platforms = model.Strings{a.Platform}
 			if a.TargetPlatforms != nil {
@@ -422,8 +422,8 @@ func (s *Service) prepare(ctx context.Context, p ReleasePayload) ([]model.Artifa
 			local := map[string]bool{}
 			includesSelf := false
 			for _, target := range platforms {
-				if !domain.Platforms[target] || local[target] {
-					return nil, zero, domain.Err("invalid_artifact_platform", "Updater target platforms must be supported and unique.")
+				if !domain.UpdaterSupports(target, a.Architecture) || local[target] {
+					return nil, zero, domain.Err("invalid_artifact_platform", "Updater target platforms must match the architecture and be unique.")
 				}
 				if targets[target] {
 					return nil, zero, domain.Err("duplicate_artifact", "Updater platforms must be unique.")
