@@ -74,6 +74,12 @@ docker compose up -d server
 
 `DOCKER_DATABASE_URL` 使用 `postgres://axolotl:编码后的密码@db:5432/axolotl?sslmode=disable`。默认不信任容器外转发的客户端 IP；按反向代理实际连接地址配置 `TRUSTED_PROXY_CIDRS`。本机默认只信任 loopback。可信代理解析同时用于统计、审计和限流，不依赖 Cloudflare。
 
+### Windows ARM64 支持的升级顺序
+
+先停止旧服务、替换为支持 `windows-aarch64` 的二进制并启动，确认健康检查成功，再运行启动器的 Update Server 发布步骤。服务采用单实例部署；若外部部署使用多个副本，必须先排空并升级全部旧副本，才能投递含 ARM64 制品的 webhook，避免请求仍被旧版白名单以 `400 invalid_artifact_platform` 拒绝。
+
+若此前发布已失败，升级完成后重新执行启动器的 Update Server 发布步骤。手动重投时保留相同的 `event_id` 和原始 JSON 请求体，并使用当前时间重新生成 webhook 时间戳和 HMAC 签名；失败事件允许以相同载荷重试，已经成功处理的相同事件返回幂等成功。不要为了重试删除已发布版本或编辑数据库。
+
 ## 运维命令
 
 ```text
